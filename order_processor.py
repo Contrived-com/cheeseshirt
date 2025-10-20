@@ -8,8 +8,11 @@ from config import Config
 class OrderProcessor:
     def __init__(self, config: Config):
         self.config = config
-        self.processed_orders_dir = "processed_orders"
-        self.attachments_dir = "attachments"
+        # Use state/ directory for containerized deployment
+        # or fall back to current directory structure for local dev
+        base_dir = os.getenv("STATE_DIR", "state") if os.path.exists("state") or os.getenv("STATE_DIR") else "."
+        self.processed_orders_dir = os.path.join(base_dir, "processed_orders")
+        self.attachments_dir = os.path.join(base_dir, "attachments")
         self._ensure_directories()
     
     def _ensure_directories(self):
