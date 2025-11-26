@@ -12,6 +12,7 @@ A simple Python backend that integrates with Shopify's GraphQL API to process or
 - **Background Tasks**: Asynchronous email sending
 - **AI Integration**: OpenAI for order analysis and summaries (optional)
 - **SMS Notifications**: Twilio integration for SMS alerts (optional)
+- **Order Archiving**: Stores full Shopify payloads under `Orders/<shopify_id>/order.json`
 
 ## Setup
 

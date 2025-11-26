@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from typing import List, Optional
 from datetime import datetime
 from models import Order, ProcessedOrder, LineItem
@@ -13,12 +14,14 @@ class OrderProcessor:
         base_dir = os.getenv("STATE_DIR", "state") if os.path.exists("state") or os.getenv("STATE_DIR") else "."
         self.processed_orders_dir = os.path.join(base_dir, "processed_orders")
         self.attachments_dir = os.path.join(base_dir, "attachments")
+        self.orders_dir = os.path.join(os.getcwd(), "Orders")
         self._ensure_directories()
     
     def _ensure_directories(self):
         """Create necessary directories if they don't exist"""
         os.makedirs(self.processed_orders_dir, exist_ok=True)
         os.makedirs(self.attachments_dir, exist_ok=True)
+        os.makedirs(self.orders_dir, exist_ok=True)
     
     def process_order(self, order: Order) -> ProcessedOrder:
         """
@@ -36,6 +39,8 @@ class OrderProcessor:
         
         # Save processed order data
         self._save_processed_order(processed_order)
+        # Archive full order payload
+        self._archive_order(order)
         
         return processed_order
     
@@ -65,12 +70,22 @@ class OrderProcessor:
             for item in tshirt_items:
                 notes.append(f"  - {item.title} (Qty: {item.quantity})")
                 notes.append(f"    Price: {order.currency_code} {item.price} each")
+                if item.size:
+                    notes.append(f"    Size: {item.size}")
+                if item.custom_attributes:
+                    for attr in item.custom_attributes:
+                        notes.append(f"    {attr.key}: {attr.value}")
             notes.append("")
         
         if other_items:
             notes.append("OTHER ITEMS:")
             for item in other_items:
                 notes.append(f"  - {item.title} (Qty: {item.quantity})")
+                if item.size:
+                    notes.append(f"    Size: {item.size}")
+                if item.custom_attributes:
+                    for attr in item.custom_attributes:
+                        notes.append(f"    {attr.key}: {attr.value}")
             notes.append("")
         
         # Add shipping information
@@ -150,6 +165,25 @@ class OrderProcessor:
         
         with open(filepath, 'w') as f:
             json.dump(data, f, indent=2, default=str)
+
+    def _archive_order(self, order: Order):
+        """
+        Persist a verbatim copy of the Shopify order under Orders/<id>/order.json
+        """
+        safe_order_id = self._sanitize_order_id(order.id)
+        order_dir = os.path.join(self.orders_dir, safe_order_id)
+        os.makedirs(order_dir, exist_ok=True)
+
+        order_path = os.path.join(order_dir, "order.json")
+        with open(order_path, 'w') as f:
+            json.dump(order.dict(), f, indent=2, default=str)
+
+    @staticmethod
+    def _sanitize_order_id(order_id: str) -> str:
+        """
+        Replace filesystem-unsafe characters so Shopify IDs can be used as folder names
+        """
+        return re.sub(r"[^A-Za-z0-9._-]", "_", order_id)
     
     def get_processed_orders(self) -> List[ProcessedOrder]:
         """

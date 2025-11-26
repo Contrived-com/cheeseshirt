@@ -1,12 +1,18 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional
 from datetime import datetime
+
+class CustomAttribute(BaseModel):
+    key: str
+    value: str
 
 class LineItem(BaseModel):
     title: str
     quantity: int
     variant_id: str
     price: str
+    size: Optional[str] = None
+    custom_attributes: List[CustomAttribute] = Field(default_factory=list)
 
 class Order(BaseModel):
     id: str

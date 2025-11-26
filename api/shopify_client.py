@@ -2,7 +2,7 @@ import requests
 import json
 from typing import List, Optional
 from config import Config
-from models import Order, LineItem
+from models import Order, LineItem, CustomAttribute
 from datetime import datetime
 
 class ShopifyClient:
@@ -39,11 +39,20 @@ class ShopifyClient:
                                     quantity
                                     variant {
                                         id
+                                        title
+                                        selectedOptions {
+                                            name
+                                            value
+                                        }
                                     }
                                     originalUnitPriceSet {
                                         shopMoney {
                                             amount
                                         }
+                                    }
+                                    customAttributes {
+                                        key
+                                        value
                                     }
                                 }
                             }
@@ -102,11 +111,28 @@ class ShopifyClient:
                 line_items = []
                 for item_edge in order_data["lineItems"]["edges"]:
                     item = item_edge["node"]
+                    variant_data = item.get("variant") or {}
+                    selected_options = variant_data.get("selectedOptions") or []
+                    size = next(
+                        (
+                            option.get("value")
+                            for option in selected_options
+                            if option.get("name", "").lower() == "size"
+                        ),
+                        None
+                    )
+                    custom_attributes = [
+                        CustomAttribute(key=attr["key"], value=attr["value"])
+                        for attr in (item.get("customAttributes") or [])
+                    ]
+
                     line_items.append(LineItem(
                         title=item["title"],
                         quantity=item["quantity"],
-                        variant_id=item["variant"]["id"],
-                        price=item["originalUnitPriceSet"]["shopMoney"]["amount"]
+                        variant_id=variant_data.get("id", ""),
+                        price=item["originalUnitPriceSet"]["shopMoney"]["amount"],
+                        size=size,
+                        custom_attributes=custom_attributes
                     ))
                 
                 # Parse order
@@ -152,11 +178,20 @@ class ShopifyClient:
                             quantity
                             variant {
                                 id
+                                title
+                                selectedOptions {
+                                    name
+                                    value
+                                }
                             }
                             originalUnitPriceSet {
                                 shopMoney {
                                     amount
                                 }
+                            }
+                            customAttributes {
+                                key
+                                value
                             }
                         }
                     }
@@ -211,11 +246,28 @@ class ShopifyClient:
             line_items = []
             for item_edge in order_data["lineItems"]["edges"]:
                 item = item_edge["node"]
+                variant_data = item.get("variant") or {}
+                selected_options = variant_data.get("selectedOptions") or []
+                size = next(
+                    (
+                        option.get("value")
+                        for option in selected_options
+                        if option.get("name", "").lower() == "size"
+                    ),
+                    None
+                )
+                custom_attributes = [
+                    CustomAttribute(key=attr["key"], value=attr["value"])
+                    for attr in (item.get("customAttributes") or [])
+                ]
+
                 line_items.append(LineItem(
                     title=item["title"],
                     quantity=item["quantity"],
-                    variant_id=item["variant"]["id"],
-                    price=item["originalUnitPriceSet"]["shopMoney"]["amount"]
+                    variant_id=variant_data.get("id", ""),
+                    price=item["originalUnitPriceSet"]["shopMoney"]["amount"],
+                    size=size,
+                    custom_attributes=custom_attributes
                 ))
             
             # Parse order
