@@ -1,23 +1,17 @@
-# cheeseshirt docker-compose
+# cheeseshirt production docker-compose
+#
+# Pull-only configuration for deployment servers.
+# No build context - images are pulled from GHCR.
 #
 # Usage:
-#   Local development (build from source):
-#     docker compose up -d --build
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
 #
-#   Production (pull from GHCR):
-#     docker compose pull
-#     docker compose up -d
-#
-# The 'image' directive is used for pulling, 'build' for local builds.
-# When both are present, 'docker compose up' uses the image,
-# 'docker compose up --build' builds locally.
+# Required: Create .env file with your secrets before running.
 
 services:
   api:
     image: ghcr.io/contrived-com/cheeseshirt-api:latest
-    build:
-      context: ./api
-      dockerfile: Dockerfile
     container_name: cheeseshirt-api
     restart: unless-stopped
     environment:
@@ -30,7 +24,7 @@ services:
       - SHOPIFY_ACCESS_TOKEN=${SHOPIFY_ACCESS_TOKEN}
       - SHOPIFY_API_VERSION=${SHOPIFY_API_VERSION:-2024-01}
       - DATABASE_PATH=/app/data/cheeseshirt.db
-      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+      - COOKIE_SECURE=${COOKIE_SECURE:-true}
       - TIME_WASTER_THRESHOLD_HOURS=${TIME_WASTER_THRESHOLD_HOURS:-24}
       - SHOPIFY_VARIANT_XS=${SHOPIFY_VARIANT_XS}
       - SHOPIFY_VARIANT_S=${SHOPIFY_VARIANT_S}
@@ -48,12 +42,14 @@ services:
       start_period: 10s
     networks:
       - cheeseshirt
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   web:
     image: ghcr.io/contrived-com/cheeseshirt-web:latest
-    build:
-      context: ./web
-      dockerfile: Dockerfile
     container_name: cheeseshirt-web
     restart: unless-stopped
     ports:
@@ -69,7 +65,13 @@ services:
       start_period: 5s
     networks:
       - cheeseshirt
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   cheeseshirt:
     driver: bridge
+

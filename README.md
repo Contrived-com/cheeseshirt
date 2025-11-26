@@ -46,9 +46,35 @@ npm run dev
 
 visit http://localhost:3000
 
+## ci/cd
+
+images are automatically built and pushed to GHCR on push to main:
+
+- `ghcr.io/contrived-com/cheeseshirt-api:latest`
+- `ghcr.io/contrived-com/cheeseshirt-web:latest`
+
+tags created:
+- `latest` - current main branch
+- `main` - branch name
+- `abc1234` - commit SHA
+
 ## deployment
 
-### build images
+### option 1: pull from ghcr (recommended)
+
+```bash
+# on your server
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+```
+
+### option 2: build locally
+
+```bash
+docker compose up -d --build
+```
+
+### build images manually
 
 ```bash
 # api

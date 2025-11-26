@@ -12,26 +12,40 @@ interface CheckoutResult {
   checkoutId: string;
 }
 
-// Size variant mapping - these IDs would come from your Shopify product
-const SIZE_VARIANTS: Record<string, string> = {
-  's': 'gid://shopify/ProductVariant/small-variant-id',
-  'm': 'gid://shopify/ProductVariant/medium-variant-id',
-  'l': 'gid://shopify/ProductVariant/large-variant-id',
-  'xl': 'gid://shopify/ProductVariant/xl-variant-id',
-  'xxl': 'gid://shopify/ProductVariant/xxl-variant-id',
-};
+// Size variant mapping - loaded from environment
+function getVariantId(size: string): string | undefined {
+  const sizeMap: Record<string, string> = {
+    'xs': 'XS',
+    'extra small': 'XS',
+    's': 'S',
+    'small': 'S',
+    'm': 'M',
+    'medium': 'M',
+    'l': 'L',
+    'large': 'L',
+    'xl': 'XL',
+    'extra large': 'XL',
+    'xxl': '2XL',
+    '2xl': '2XL',
+    '2x': '2XL',
+  };
+  
+  const normalized = sizeMap[size.toLowerCase()] || size.toUpperCase();
+  const envKey = `SHOPIFY_VARIANT_${normalized}`;
+  return process.env[envKey];
+}
 
 export async function createCheckout(input: CheckoutInput): Promise<CheckoutResult> {
   const { size, phrase, discountCode, customerId } = input;
   
-  const variantId = SIZE_VARIANTS[size.toLowerCase()];
+  const variantId = getVariantId(size);
   if (!variantId) {
-    throw new Error(`Invalid size: ${size}`);
+    console.error(`No variant ID found for size: ${size}`);
+    throw new Error(`Invalid size: ${size}. Available: XS, S, M, L, XL, 2XL`);
   }
   
-  // Create checkout using Shopify Storefront API
-  // For now, we'll use a direct link approach that works with standard Shopify
-  const checkoutUrl = buildCheckoutUrl(size, phrase, discountCode, customerId);
+  // Build checkout URL with cart permalink
+  const checkoutUrl = buildCheckoutUrl(variantId, phrase, discountCode, customerId);
   
   return {
     checkoutUrl,
@@ -39,23 +53,15 @@ export async function createCheckout(input: CheckoutInput): Promise<CheckoutResu
   };
 }
 
-function buildCheckoutUrl(size: string, phrase: string, discountCode?: string, customerId?: string): string {
+function buildCheckoutUrl(variantId: string, phrase: string, discountCode?: string, customerId?: string): string {
   // Build a Shopify checkout URL with cart attributes
-  // This uses Shopify's cart permalink format
+  // Format: /cart/VARIANT_ID:QUANTITY?attributes[key]=value
   
   const baseUrl = `https://${config.shopifyStoreUrl}/cart`;
-  
-  // You'll need to set up your actual variant IDs in Shopify
-  // Format: /cart/VARIANT_ID:QUANTITY
-  // For now, using a placeholder that you'll configure
-  const variantId = process.env[`SHOPIFY_VARIANT_${size.toUpperCase()}`] || '00000000000';
-  
   const cartUrl = `${baseUrl}/${variantId}:1`;
   
-  // Add attributes
+  // Add attributes - these appear in order details
   const params = new URLSearchParams();
-  
-  // Custom attributes are passed as attributes[key]=value
   params.set('attributes[phrase]', phrase);
   params.set('attributes[customer_id]', customerId || 'anonymous');
   params.set('attributes[source]', 'monger-terminal');
@@ -96,13 +102,19 @@ export async function createCheckoutGraphQL(input: CheckoutInput): Promise<Check
     }
   `;
   
-  const variantId = SIZE_VARIANTS[size.toLowerCase()];
+  const variantId = getVariantId(size);
+  if (!variantId) {
+    return createCheckout(input);
+  }
+  
+  // Convert numeric ID to GID format for GraphQL
+  const variantGid = `gid://shopify/ProductVariant/${variantId}`;
   
   const variables = {
     input: {
       lineItems: [
         {
-          variantId,
+          variantId: variantGid,
           quantity: 1,
           customAttributes: [
             { key: 'phrase', value: phrase },
