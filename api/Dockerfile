@@ -40,8 +40,8 @@ COPY --from=builder /app/dist ./dist
 RUN addgroup -g 1001 -S monger && \
     adduser -S monger -u 1001 -G monger
 
-# Create data directory (ephemeral in container)
-RUN mkdir -p /app/data && chown -R monger:monger /app/data
+# Create data and logs directories
+RUN mkdir -p /app/data /app/logs && chown -R monger:monger /app/data /app/logs
 
 USER monger
 
@@ -49,7 +49,9 @@ USER monger
 ENV NODE_ENV=production \
     PORT=3001 \
     HOST=0.0.0.0 \
-    DATABASE_PATH=/app/data/cheeseshirt.db
+    DATABASE_PATH=/app/data/cheeseshirt.db \
+    LOG_PATH=/app/logs/cheeseshirt-api.log \
+    LOG_LEVEL=info
 
 EXPOSE 3001
 

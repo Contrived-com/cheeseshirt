@@ -1,6 +1,7 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { v4 as uuidv4 } from 'uuid';
 import { config, validateConfig } from './config.js';
+import { logger } from './logger.js';
 import {
   getOrCreateCustomer,
   createSession,
@@ -16,6 +17,9 @@ import {
 } from './db.js';
 import { getMongerReply, getOpeningLine, getReferralResponseLine, MongerResponse } from './monger.js';
 import { createCheckout } from './shopify.js';
+
+// Initialize logger before anything else
+logger.init(config.logPath || undefined, config.logLevel);
 
 validateConfig();
 
@@ -128,6 +132,12 @@ async function handleSessionInit(req: IncomingMessage, res: ServerResponse) {
   const sessionId = uuidv4();
   createSession(sessionId, customerId);
   
+  logger.session('init', sessionId, customerId, { 
+    isNewCustomer, 
+    isTimeWaster: timeWaster,
+    totalShirtsBought: customer.total_shirts_bought 
+  });
+  
   // Get opening line
   const openingLine = getOpeningLine(customer, timeWaster);
   
@@ -173,18 +183,27 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
   const body = await parseBody<ChatRequest>(req);
   
   if (!body.sessionId || !body.userInput) {
+    logger.warn('Chat: missing required fields', { hasSessionId: !!body.sessionId, hasUserInput: !!body.userInput });
     return sendError(res, 'Missing sessionId or userInput');
   }
   
   const session = getSession(body.sessionId);
   if (!session) {
+    logger.warn('Chat: invalid session', { sessionId: body.sessionId.substring(0, 8) + '...' });
     return sendError(res, 'Invalid session', 404);
   }
   
   const customer = getOrCreateCustomer(session.customer_id);
   
+  logger.debug('Chat: processing', { 
+    sessionId: body.sessionId.substring(0, 8) + '...', 
+    inputLength: body.userInput.length,
+    userInputPreview: body.userInput.substring(0, 50)
+  });
+  
   // Check if time waster trying to come back
   if (isRecentTimeWaster(session.customer_id, config.timeWasterThresholdHours)) {
+    logger.info('Chat: blocked time waster', { customerId: session.customer_id.substring(0, 8) + '...' });
     return sendJson(res, {
       mongerReply: "you wasted the monger's time.  he'll be back later.",
       conversationState: 'blocked',
@@ -199,6 +218,14 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
   
   try {
     const mongerResponse = await getMongerReply(body.sessionId, body.userInput, customer);
+    
+    logger.debug('Chat: response generated', {
+      sessionId: body.sessionId.substring(0, 8) + '...',
+      mood: mongerResponse.state.mood,
+      readyForCheckout: mongerResponse.state.readyForCheckout,
+      hasSize: !!mongerResponse.state.size,
+      hasPhrase: !!mongerResponse.state.phrase
+    });
     
     const response: ChatResponse = {
       mongerReply: mongerResponse.reply,
@@ -216,7 +243,10 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
     sendJson(res, response);
     
   } catch (error) {
-    console.error('Chat error:', error);
+    logger.error('Chat: handler error', { 
+      sessionId: body.sessionId.substring(0, 8) + '...',
+      error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : String(error)
+    });
     sendError(res, 'Internal error', 500);
   }
 }
@@ -298,13 +328,26 @@ async function handleCreateCheckout(req: IncomingMessage, res: ServerResponse) {
   const body = await parseBody<CreateCheckoutRequest>(req);
   
   if (!body.sessionId || !body.size || !body.phrase) {
+    logger.warn('Checkout: missing required fields', { 
+      hasSessionId: !!body.sessionId, 
+      hasSize: !!body.size, 
+      hasPhrase: !!body.phrase 
+    });
     return sendError(res, 'Missing required fields');
   }
   
   const session = getSession(body.sessionId);
   if (!session) {
+    logger.warn('Checkout: invalid session', { sessionId: body.sessionId.substring(0, 8) + '...' });
     return sendError(res, 'Invalid session', 404);
   }
+  
+  logger.info('Checkout: creating', { 
+    sessionId: body.sessionId.substring(0, 8) + '...',
+    size: body.size,
+    phraseLength: body.phrase.length,
+    hasDiscountCode: !!(body.discountCode || session.discount_code)
+  });
   
   try {
     const result = await createCheckout({
@@ -325,6 +368,11 @@ async function handleCreateCheckout(req: IncomingMessage, res: ServerResponse) {
       discountCode: session.discount_code
     });
     
+    logger.info('Checkout: created successfully', { 
+      sessionId: body.sessionId.substring(0, 8) + '...',
+      checkoutUrlDomain: new URL(result.checkoutUrl).hostname
+    });
+    
     const response: CreateCheckoutResponse = {
       checkoutUrl: result.checkoutUrl
     };
@@ -332,7 +380,10 @@ async function handleCreateCheckout(req: IncomingMessage, res: ServerResponse) {
     sendJson(res, response);
     
   } catch (error) {
-    console.error('Checkout error:', error);
+    logger.shopifyError('create checkout', error, { 
+      sessionId: body.sessionId.substring(0, 8) + '...',
+      size: body.size
+    });
     sendError(res, 'Failed to create checkout', 500);
   }
 }
@@ -417,6 +468,7 @@ async function handleMarkTimeWaster(req: IncomingMessage, res: ServerResponse) {
 
 // Request router
 async function handleRequest(req: IncomingMessage, res: ServerResponse) {
+  const startTime = Date.now();
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const path = url.pathname;
   const method = req.method || 'GET';
@@ -428,7 +480,22 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
     return;
   }
   
-  console.log(`${method} ${path}`);
+  // Skip logging for health checks (too noisy)
+  const isHealthCheck = path === '/api/health';
+  
+  if (!isHealthCheck) {
+    logger.request(method, path);
+  }
+  
+  // Capture response status for logging
+  const originalEnd = res.end.bind(res);
+  let statusCode = 200;
+  res.end = function(chunk?: any, encoding?: any, callback?: any) {
+    if (!isHealthCheck) {
+      logger.response(method, path, res.statusCode || statusCode, Date.now() - startTime);
+    }
+    return originalEnd(chunk, encoding, callback);
+  } as typeof res.end;
   
   try {
     // Route requests
@@ -453,7 +520,11 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       sendError(res, 'Not found', 404);
     }
   } catch (error) {
-    console.error('Request error:', error);
+    logger.error('Request handler error', { 
+      method, 
+      path,
+      error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : String(error)
+    });
     sendError(res, 'Internal server error', 500);
   }
 }
@@ -462,13 +533,27 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
 const server = createServer(handleRequest);
 
 server.listen(config.port, config.host, () => {
-  console.log(`the monger is listening at http://${config.host}:${config.port}`);
-  console.log(`endpoints:`);
-  console.log(`  POST /api/session/init`);
-  console.log(`  POST /api/chat`);
-  console.log(`  POST /api/referral-lookup`);
-  console.log(`  POST /api/create-checkout`);
-  console.log(`  GET  /api/profile`);
-  console.log(`  GET  /api/health`);
+  logger.info('Server started', {
+    host: config.host,
+    port: config.port,
+    nodeEnv: process.env.NODE_ENV || 'development',
+    logPath: config.logPath || '(console only)',
+    logLevel: config.logLevel,
+    hasOpenAiKey: !!config.openaiApiKey,
+    openAiModel: config.openaiModel,
+    hasShopifyToken: !!config.shopifyAccessToken,
+    databasePath: config.databasePath
+  });
+  
+  logger.info('Endpoints available', {
+    endpoints: [
+      'POST /api/session/init',
+      'POST /api/chat',
+      'POST /api/referral-lookup',
+      'POST /api/create-checkout',
+      'GET  /api/profile',
+      'GET  /api/health'
+    ]
+  });
 });
 

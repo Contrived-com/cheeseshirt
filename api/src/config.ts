@@ -27,6 +27,10 @@ export const config = {
   
   // Time-waster threshold
   timeWasterThresholdHours: parseInt(process.env.TIME_WASTER_THRESHOLD_HOURS || '24', 10),
+  
+  // Logging
+  logPath: process.env.LOG_PATH || '',  // e.g. /app/logs/cheeseshirt-api.log
+  logLevel: (process.env.LOG_LEVEL || 'info') as 'debug' | 'info' | 'warn' | 'error',
 } as const;
 
 export function validateConfig(): void {

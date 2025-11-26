@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { config } from './config.js';
+import { logger } from './logger.js';
 import { 
   getSession, 
   updateSessionState, 
@@ -9,6 +10,12 @@ import {
   SessionRow,
   CustomerRow 
 } from './db.js';
+
+logger.info('Initializing OpenAI client', { 
+  hasApiKey: !!config.openaiApiKey,
+  apiKeyPrefix: config.openaiApiKey ? config.openaiApiKey.substring(0, 7) + '...' : '(missing)',
+  model: config.openaiModel
+});
 
 const openai = new OpenAI({ apiKey: config.openaiApiKey });
 
@@ -122,6 +129,7 @@ export async function getMongerReply(
 ): Promise<MongerResponse> {
   const session = getSession(sessionId);
   if (!session) {
+    logger.error('getMongerReply: session not found', { sessionId: sessionId.substring(0, 8) + '...' });
     throw new Error('Session not found');
   }
   
@@ -154,7 +162,22 @@ remember: collect affirmation, size, and phrase.  when you have all three, set r
   // Add current user input
   messages.push({ role: 'user', content: userInput });
   
+  const startTime = Date.now();
+  
+  logger.openaiRequest(config.openaiModel, messages.length, {
+    sessionId: sessionId.substring(0, 8) + '...',
+    historyMessages: messageHistory.length,
+    userInputLength: userInput.length
+  });
+  
   try {
+    logger.debug('OpenAI: sending request', {
+      endpoint: 'chat.completions.create',
+      model: config.openaiModel,
+      temperature: 0.7,
+      maxTokens: 500
+    });
+    
     const completion = await openai.chat.completions.create({
       model: config.openaiModel,
       messages,
@@ -163,12 +186,45 @@ remember: collect affirmation, size, and phrase.  when you have all three, set r
       response_format: { type: 'json_object' }
     });
     
+    const durationMs = Date.now() - startTime;
     const content = completion.choices[0]?.message?.content;
+    
+    logger.openaiResponse(config.openaiModel, durationMs, completion.usage?.total_tokens, {
+      sessionId: sessionId.substring(0, 8) + '...',
+      finishReason: completion.choices[0]?.finish_reason,
+      promptTokens: completion.usage?.prompt_tokens,
+      completionTokens: completion.usage?.completion_tokens,
+      hasContent: !!content,
+      contentLength: content?.length
+    });
+    
     if (!content) {
+      logger.error('OpenAI: empty response content', {
+        sessionId: sessionId.substring(0, 8) + '...',
+        choices: completion.choices.length,
+        finishReason: completion.choices[0]?.finish_reason
+      });
       throw new Error('Empty response from OpenAI');
     }
     
-    const response: MongerResponse = JSON.parse(content);
+    let response: MongerResponse;
+    try {
+      response = JSON.parse(content);
+    } catch (parseError) {
+      logger.error('OpenAI: failed to parse JSON response', {
+        sessionId: sessionId.substring(0, 8) + '...',
+        contentPreview: content.substring(0, 200),
+        parseError: parseError instanceof Error ? parseError.message : String(parseError)
+      });
+      throw new Error('Invalid JSON response from OpenAI');
+    }
+    
+    logger.debug('OpenAI: parsed response', {
+      sessionId: sessionId.substring(0, 8) + '...',
+      replyLength: response.reply?.length,
+      mood: response.state?.mood,
+      readyForCheckout: response.state?.readyForCheckout
+    });
     
     // Store messages
     addMessage(sessionId, 'user', userInput);
@@ -185,7 +241,35 @@ remember: collect affirmation, size, and phrase.  when you have all three, set r
     return response;
     
   } catch (error) {
-    console.error('OpenAI error:', error);
+    const durationMs = Date.now() - startTime;
+    
+    // Detailed error logging for OpenAI issues
+    logger.openaiError(error, {
+      sessionId: sessionId.substring(0, 8) + '...',
+      durationMs,
+      model: config.openaiModel,
+      messageCount: messages.length
+    });
+    
+    // Additional context for network/API errors
+    if (error instanceof Error) {
+      const anyError = error as any;
+      if (anyError.code) {
+        logger.error('OpenAI: error code details', {
+          code: anyError.code,
+          type: anyError.type,
+          status: anyError.status,
+          headers: anyError.headers ? Object.keys(anyError.headers) : undefined
+        });
+      }
+      if (anyError.cause) {
+        logger.error('OpenAI: error cause', {
+          cause: anyError.cause instanceof Error 
+            ? { name: anyError.cause.name, message: anyError.cause.message, code: (anyError.cause as any).code }
+            : String(anyError.cause)
+        });
+      }
+    }
     
     // Fallback response in character
     return {
