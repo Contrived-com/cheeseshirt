@@ -3,16 +3,38 @@ import { config } from './config.js';
 import { mkdirSync, existsSync } from 'fs';
 import { dirname } from 'path';
 
+// Simple console log for early startup (before logger is available)
+const dbLog = (msg: string, data?: object) => {
+  const ts = new Date().toISOString();
+  console.log(`[${ts}] [DB] ${msg}`, data ? JSON.stringify(data) : '');
+};
+
 // Ensure data directory exists
 const dbDir = dirname(config.databasePath);
+dbLog('Initializing database', { path: config.databasePath, dir: dbDir });
+
 if (!existsSync(dbDir)) {
+  dbLog('Creating database directory', { dir: dbDir });
   mkdirSync(dbDir, { recursive: true });
 }
 
-export const db: DatabaseType = new Database(config.databasePath);
+let db: DatabaseType;
+try {
+  db = new Database(config.databasePath);
+  dbLog('Database connection opened');
+} catch (error) {
+  dbLog('FATAL: Failed to open database', { 
+    error: error instanceof Error ? error.message : String(error) 
+  });
+  throw error;
+}
+
+export { db };
 
 // Initialize database schema
-db.exec(`
+dbLog('Creating schema (if not exists)');
+try {
+  db.exec(`
   CREATE TABLE IF NOT EXISTS customers (
     id TEXT PRIMARY KEY,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -59,6 +81,13 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions(customer_id);
   CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 `);
+  dbLog('Schema ready');
+} catch (error) {
+  dbLog('FATAL: Failed to create schema', { 
+    error: error instanceof Error ? error.message : String(error) 
+  });
+  throw error;
+}
 
 // Customer operations
 export function getOrCreateCustomer(customerId: string) {

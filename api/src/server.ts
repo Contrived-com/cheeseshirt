@@ -21,6 +21,39 @@ import { createCheckout } from './shopify.js';
 // Initialize logger before anything else
 logger.init(config.logPath || undefined, config.logLevel);
 
+// Global error handlers - catch crashes and log before exit
+process.on('uncaughtException', (error: Error) => {
+  logger.error('FATAL: Uncaught Exception', {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+  });
+  // Give the logger time to write, then exit
+  setTimeout(() => process.exit(1), 100);
+});
+
+process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
+  logger.error('FATAL: Unhandled Promise Rejection', {
+    reason: reason instanceof Error 
+      ? { name: reason.name, message: reason.message, stack: reason.stack }
+      : String(reason),
+  });
+  // Give the logger time to write, then exit
+  setTimeout(() => process.exit(1), 100);
+});
+
+process.on('SIGTERM', () => {
+  logger.info('Received SIGTERM, shutting down gracefully');
+  setTimeout(() => process.exit(0), 100);
+});
+
+process.on('SIGINT', () => {
+  logger.info('Received SIGINT, shutting down gracefully');
+  setTimeout(() => process.exit(0), 100);
+});
+
+logger.info('Process handlers registered', { pid: process.pid });
+
 validateConfig();
 
 // CORS headers for cross-origin requests
