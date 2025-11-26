@@ -10,10 +10,33 @@
 # Required: Create .env file with your secrets before running.
 
 services:
+  monger:
+    image: ghcr.io/contrived-com/cheeseshirt-monger:latest
+    container_name: cheeseshirt-monger
+    restart: unless-stopped
+    volumes:
+      - monger-config:/shared
+    healthcheck:
+      test: ["CMD", "test", "-f", "/shared/monger.json"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 2s
+    networks:
+      - cheeseshirt
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
   api:
     image: ghcr.io/contrived-com/cheeseshirt-api:latest
     container_name: cheeseshirt-api
     restart: unless-stopped
+    depends_on:
+      monger:
+        condition: service_healthy
     environment:
       - NODE_ENV=production
       - PORT=3001
@@ -34,10 +57,10 @@ services:
       - SHOPIFY_VARIANT_2XL=${SHOPIFY_VARIANT_2XL}
       - LOG_PATH=/app/logs/cheeseshirt-api.log
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      # - MONGER_CONFIG_PATH=/app/monger/monger.json  # uncomment after new image is pushed
+      - MONGER_CONFIG_PATH=/app/monger/monger.json
     volumes:
       - cheeseshirt-logs:/app/logs
-      # - ./monger:/app/monger:ro  # uncomment after new image is pushed
+      - monger-config:/app/monger:ro
     ports:
       - "127.0.0.1:3001:3001"
     healthcheck:
@@ -88,3 +111,4 @@ volumes:
       type: none
       o: bind
       device: /var/log/cheeseshirt
+  monger-config:
