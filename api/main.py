@@ -1,8 +1,11 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Header
 from fastapi.responses import JSONResponse
 from typing import List, Optional
 import uvicorn
 from datetime import datetime
+import hmac
+import hashlib
+import base64
 
 from config import Config
 from models import Order, ProcessedOrder, EmailRequest
@@ -25,6 +28,22 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Webhook verification helper
+def verify_shopify_webhook(data: bytes, hmac_header: str, secret: str) -> bool:
+    """Verify that the webhook request is from Shopify"""
+    if not hmac_header or not secret:
+        return False
+    
+    computed_hmac = base64.b64encode(
+        hmac.new(
+            secret.encode('utf-8'),
+            data,
+            hashlib.sha256
+        ).digest()
+    ).decode('utf-8')
+    
+    return hmac.compare_digest(computed_hmac, hmac_header)
+
 @app.get("/")
 async def root():
     """Root endpoint with API information"""
@@ -45,6 +64,125 @@ async def root():
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+@app.post("/webhooks/orders/create")
+async def webhook_order_created(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    x_shopify_hmac_sha256: Optional[str] = Header(None),
+    x_shopify_topic: Optional[str] = Header(None),
+    x_shopify_shop_domain: Optional[str] = Header(None)
+):
+    """
+    Webhook endpoint for Shopify order creation events
+    """
+    try:
+        # Get raw body for HMAC verification
+        body = await request.body()
+        
+        # Verify webhook signature if secret is configured
+        if config.SHOPIFY_WEBHOOK_SECRET:
+            if not verify_shopify_webhook(body, x_shopify_hmac_sha256 or "", config.SHOPIFY_WEBHOOK_SECRET):
+                raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        
+        # Parse the webhook payload
+        import json
+        payload = json.loads(body.decode('utf-8'))
+        
+        # Log webhook receipt
+        print(f"Received webhook: {x_shopify_topic} from {x_shopify_shop_domain}")
+        print(f"Order ID: {payload.get('id')}, Order Name: {payload.get('name')}")
+        
+        # TODO: Process the order in the background if desired
+        # background_tasks.add_task(process_webhook_order, payload)
+        
+        # Return success response (Shopify expects 200 OK)
+        return {"status": "received", "order_id": payload.get("id"), "order_name": payload.get("name")}
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    except Exception as e:
+        print(f"Webhook processing error: {str(e)}")
+        # Return 200 anyway to prevent Shopify from retrying
+        return {"status": "error", "message": str(e)}
+
+@app.post("/webhooks/orders/updated")
+async def webhook_order_updated(
+    request: Request,
+    x_shopify_hmac_sha256: Optional[str] = Header(None),
+    x_shopify_topic: Optional[str] = Header(None),
+    x_shopify_shop_domain: Optional[str] = Header(None)
+):
+    """
+    Webhook endpoint for Shopify order update events
+    """
+    try:
+        body = await request.body()
+        
+        if config.SHOPIFY_WEBHOOK_SECRET:
+            if not verify_shopify_webhook(body, x_shopify_hmac_sha256 or "", config.SHOPIFY_WEBHOOK_SECRET):
+                raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        
+        import json
+        payload = json.loads(body.decode('utf-8'))
+        
+        print(f"Received webhook: {x_shopify_topic} from {x_shopify_shop_domain}")
+        print(f"Order ID: {payload.get('id')}, Order Name: {payload.get('name')}")
+        
+        return {"status": "received", "order_id": payload.get("id")}
+        
+    except Exception as e:
+        print(f"Webhook processing error: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+@app.post("/webhooks/orders/payment")
+async def webhook_order_payment(
+    request: Request,
+    x_shopify_hmac_sha256: Optional[str] = Header(None),
+    x_shopify_topic: Optional[str] = Header(None),
+    x_shopify_shop_domain: Optional[str] = Header(None)
+):
+    """
+    Webhook endpoint for Shopify order payment events
+    Echoes out the entire payload received from Shopify
+    """
+    try:
+        body = await request.body()
+        
+        if config.SHOPIFY_WEBHOOK_SECRET:
+            if not verify_shopify_webhook(body, x_shopify_hmac_sha256 or "", config.SHOPIFY_WEBHOOK_SECRET):
+                raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        
+        import json
+        payload = json.loads(body.decode('utf-8'))
+        
+        # Echo out all the details
+        print("\n" + "="*80)
+        print("RECEIVED PAYMENT WEBHOOK FROM SHOPIFY")
+        print("="*80)
+        print(f"Topic: {x_shopify_topic}")
+        print(f"Shop Domain: {x_shopify_shop_domain}")
+        print(f"Order ID: {payload.get('id')}")
+        print(f"Order Name: {payload.get('name')}")
+        print(f"Order Number: {payload.get('order_number')}")
+        print(f"\nFull Payload:")
+        print(json.dumps(payload, indent=2))
+        print("="*80 + "\n")
+        
+        return {
+            "status": "received",
+            "message": "Payment webhook received and logged",
+            "order_id": payload.get("id"),
+            "order_name": payload.get("name"),
+            "payload_keys": list(payload.keys())
+        }
+        
+    except json.JSONDecodeError:
+        print("Error: Invalid JSON payload received")
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    except Exception as e:
+        print(f"Webhook processing error: {str(e)}")
+        return {"status": "error", "message": str(e)}
 
 @app.get("/orders", response_model=List[Order])
 async def get_orders(limit: int = 10, status: str = "any"):
@@ -279,6 +417,44 @@ async def validate_config():
         return {"valid": False, "errors": errors}
     else:
         return {"valid": True, "message": "All required configuration is present"}
+
+@app.get("/webhooks")
+async def list_webhooks():
+    """
+    List all registered Shopify webhooks
+    """
+    try:
+        webhooks = shopify_client.list_webhooks()
+        return {"webhooks": webhooks, "count": len(webhooks)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list webhooks: {str(e)}")
+
+@app.post("/webhooks/register")
+async def register_webhook(topic: str, callback_url: str):
+    """
+    Register a new webhook with Shopify
+    
+    Example topics: "orders/create", "orders/updated", "orders/cancelled"
+    """
+    try:
+        webhook = shopify_client.register_webhook(topic, callback_url)
+        return {"message": "Webhook registered successfully", "webhook": webhook}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to register webhook: {str(e)}")
+
+@app.delete("/webhooks/{webhook_id}")
+async def delete_webhook(webhook_id: str):
+    """
+    Delete a webhook subscription
+    """
+    try:
+        success = shopify_client.delete_webhook(webhook_id)
+        if success:
+            return {"message": "Webhook deleted successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to delete webhook")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete webhook: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(

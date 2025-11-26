@@ -16,6 +16,7 @@ class Config:
         self.SHOPIFY_STORE_URL = os.getenv("SHOPIFY_STORE_URL", "your-store.myshopify.com")
         self.SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
         self.SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2024-01")
+        self.SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
         
         # Email Configuration
         self.SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")

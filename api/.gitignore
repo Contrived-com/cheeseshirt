@@ -166,6 +166,11 @@ processed_orders/
 attachments/
 emails/
 
+# Graphics/Images (design assets)
+*.png
+*.jpg
+*.jpeg
+
 # API keys and secrets
 secrets/
 credentials/

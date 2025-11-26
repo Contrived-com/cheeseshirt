@@ -235,3 +235,175 @@ class ShopifyClient:
             
         except requests.exceptions.RequestException as e:
             raise Exception(f"Failed to fetch order: {str(e)}")
+    
+    def register_webhook(self, topic: str, address: str) -> dict:
+        """
+        Register a webhook with Shopify
+        
+        Args:
+            topic: The webhook topic (e.g., "orders/create", "orders/updated")
+            address: The URL where Shopify should send the webhook
+        
+        Returns:
+            dict: The created webhook data
+        """
+        mutation = """
+        mutation webhookSubscriptionCreate($topic: WebhookSubscriptionTopic!, $webhookSubscription: WebhookSubscriptionInput!) {
+            webhookSubscriptionCreate(topic: $topic, webhookSubscription: $webhookSubscription) {
+                webhookSubscription {
+                    id
+                    topic
+                    endpoint {
+                        __typename
+                        ... on WebhookHttpEndpoint {
+                            callbackUrl
+                        }
+                    }
+                }
+                userErrors {
+                    field
+                    message
+                }
+            }
+        }
+        """
+        
+        variables = {
+            "topic": topic.upper().replace("/", "_"),
+            "webhookSubscription": {
+                "callbackUrl": address,
+                "format": "JSON"
+            }
+        }
+        
+        try:
+            response = requests.post(
+                self.config.shopify_graphql_url,
+                headers=self.headers,
+                json={"query": mutation, "variables": variables}
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"Failed to register webhook: {response.status_code} - {response.text}")
+            
+            data = response.json()
+            
+            if "errors" in data:
+                raise Exception(f"GraphQL errors: {data['errors']}")
+            
+            result = data["data"]["webhookSubscriptionCreate"]
+            
+            if result["userErrors"]:
+                raise Exception(f"User errors: {result['userErrors']}")
+            
+            return result["webhookSubscription"]
+            
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Failed to register webhook: {str(e)}")
+    
+    def list_webhooks(self) -> List[dict]:
+        """
+        List all registered webhooks
+        
+        Returns:
+            List[dict]: List of webhook subscriptions
+        """
+        query = """
+        query {
+            webhookSubscriptions(first: 50) {
+                edges {
+                    node {
+                        id
+                        topic
+                        endpoint {
+                            __typename
+                            ... on WebhookHttpEndpoint {
+                                callbackUrl
+                            }
+                        }
+                        createdAt
+                    }
+                }
+            }
+        }
+        """
+        
+        try:
+            response = requests.post(
+                self.config.shopify_graphql_url,
+                headers=self.headers,
+                json={"query": query}
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"Failed to list webhooks: {response.status_code} - {response.text}")
+            
+            data = response.json()
+            
+            if "errors" in data:
+                raise Exception(f"GraphQL errors: {data['errors']}")
+            
+            webhooks = []
+            for edge in data["data"]["webhookSubscriptions"]["edges"]:
+                node = edge["node"]
+                webhook = {
+                    "id": node["id"],
+                    "topic": node["topic"],
+                    "callback_url": node["endpoint"].get("callbackUrl", "N/A"),
+                    "created_at": node["createdAt"]
+                }
+                webhooks.append(webhook)
+            
+            return webhooks
+            
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Failed to list webhooks: {str(e)}")
+    
+    def delete_webhook(self, webhook_id: str) -> bool:
+        """
+        Delete a webhook subscription
+        
+        Args:
+            webhook_id: The ID of the webhook to delete
+        
+        Returns:
+            bool: True if successful
+        """
+        mutation = """
+        mutation webhookSubscriptionDelete($id: ID!) {
+            webhookSubscriptionDelete(id: $id) {
+                deletedWebhookSubscriptionId
+                userErrors {
+                    field
+                    message
+                }
+            }
+        }
+        """
+        
+        variables = {"id": webhook_id}
+        
+        try:
+            response = requests.post(
+                self.config.shopify_graphql_url,
+                headers=self.headers,
+                json={"query": mutation, "variables": variables}
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"Failed to delete webhook: {response.status_code} - {response.text}")
+            
+            data = response.json()
+            
+            if "errors" in data:
+                raise Exception(f"GraphQL errors: {data['errors']}")
+            
+            result = data["data"]["webhookSubscriptionDelete"]
+            
+            if result["userErrors"]:
+                raise Exception(f"User errors: {result['userErrors']}")
+            
+            return True
+            
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Failed to delete webhook: {str(e)}")
