@@ -3,16 +3,16 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cheeseshirts-api"
+name = "worker-shopify-orders"
 version = "1.0.0"
-description = "A simple Python backend that integrates with Shopify's GraphQL API to process orders and send them to t-shirt printers via email"
+description = "A worker that periodically pulls new orders from Shopify and serializes the content for processing by other workers"
 readme = "README.md"
 requires-python = ">=3.8"
 authors = [
     {name = "Sean R", email = "seanr@example.com"}
 ]
 license = {text = "MIT"}
-keywords = ["shopify", "fastapi", "orders", "email", "api"]
+keywords = ["shopify", "orders", "worker", "background-jobs"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -42,11 +42,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/seanr/cheeseshirts_api"
-Repository = "https://github.com/seanr/cheeseshirts_api"
+Homepage = "https://github.com/contrived-com/cheeseshirt"
+Repository = "https://github.com/contrived-com/cheeseshirt"
 
 [project.scripts]
-cheeseshirts-api = "main:main"
+worker-shopify-orders = "main:main"
 
 [tool.setuptools]
 py-modules = [

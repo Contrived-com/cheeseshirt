@@ -5,7 +5,7 @@
 Build the Docker image:
 
 ```bash
-docker build -t cheeseshirts-api:latest .
+docker build -t worker-shopify-orders:latest .
 ```
 
 ## Running the Container
@@ -14,35 +14,35 @@ docker build -t cheeseshirts-api:latest .
 
 ```bash
 docker run -d \
-  --name cheeseshirts-api \
+  --name worker-shopify-orders \
   -p 80:80 \
   --env-file .env \
-  cheeseshirts-api:latest
+  worker-shopify-orders:latest
 ```
 
 ### Run with Volume Mount (for persistent state)
 
 ```bash
 docker run -d \
-  --name cheeseshirts-api \
+  --name worker-shopify-orders \
   -p 80:80 \
   --env-file .env \
   -v $(pwd)/state:/app/state \
-  cheeseshirts-api:latest
+  worker-shopify-orders:latest
 ```
 
 ### Run with Individual Environment Variables
 
 ```bash
 docker run -d \
-  --name cheeseshirts-api \
+  --name worker-shopify-orders \
   -p 80:80 \
   -e SHOPIFY_STORE_URL=your-store.myshopify.com \
   -e SHOPIFY_ACCESS_TOKEN=your-token \
   -e EMAIL_USERNAME=your-email@gmail.com \
   -e EMAIL_PASSWORD=your-app-password \
   -e PRINTER_EMAIL=printer@example.com \
-  cheeseshirts-api:latest
+  worker-shopify-orders:latest
 ```
 
 ## AWS Deployment
@@ -52,9 +52,9 @@ docker run -d \
 1. **Build and tag for ECR:**
    ```bash
    aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com
-   docker build -t cheeseshirts-api .
-   docker tag cheeseshirts-api:latest YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/cheeseshirts-api:latest
-   docker push YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/cheeseshirts-api:latest
+   docker build -t worker-shopify-orders .
+   docker tag worker-shopify-orders:latest YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/worker-shopify-orders:latest
+   docker push YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/worker-shopify-orders:latest
    ```
 
 2. **Create ECS Task Definition** with:
@@ -78,9 +78,9 @@ docker run -d \
 1. Push to AWS Lightsail:
    ```bash
    aws lightsail push-container-image \
-     --service-name cheeseshirts-api \
-     --label cheeseshirts-api-latest \
-     --image cheeseshirts-api:latest
+     --service-name worker-shopify-orders \
+     --label worker-shopify-orders-latest \
+     --image worker-shopify-orders:latest
    ```
 
 2. Deploy with Lightsail container service
@@ -112,15 +112,15 @@ curl http://localhost/health
 View container logs:
 
 ```bash
-docker logs cheeseshirts-api
-docker logs -f cheeseshirts-api  # Follow logs
+docker logs worker-shopify-orders
+docker logs -f worker-shopify-orders  # Follow logs
 ```
 
 ## Stopping and Removing
 
 ```bash
-docker stop cheeseshirts-api
-docker rm cheeseshirts-api
+docker stop worker-shopify-orders
+docker rm worker-shopify-orders
 ```
 
 ## Development with Docker
@@ -129,13 +129,13 @@ For local development with hot-reload:
 
 ```bash
 docker run -d \
-  --name cheeseshirts-api-dev \
+  --name worker-shopify-orders-dev \
   -p 8000:80 \
   --env-file .env \
   -e DEBUG=True \
   -v $(pwd):/app \
   -v $(pwd)/state:/app/state \
-  cheeseshirts-api:latest
+  worker-shopify-orders:latest
 ```
 
 ## Docker Compose (Optional)

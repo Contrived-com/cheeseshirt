@@ -1,6 +1,6 @@
-# CheeseShirts API
+# CheeseShirts Shopify Orders Worker
 
-A simple Python backend that integrates with Shopify's GraphQL API to process orders and send them to t-shirt printers via email.
+A worker that periodically pulls new orders from Shopify and serializes the content for processing by other workers.
 
 ## Features
 
@@ -209,7 +209,7 @@ Once the server is running, visit:
 ## Project Structure
 
 ```
-cheeseshirts_api/
+worker-shopify-orders/
 ├── main.py                 # FastAPI application with webhook endpoints
 ├── config.py              # Configuration management
 ├── models.py              # Pydantic models
