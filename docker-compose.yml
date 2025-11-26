@@ -40,8 +40,10 @@ services:
       - SHOPIFY_VARIANT_2XL=${SHOPIFY_VARIANT_2XL}
       - LOG_PATH=/app/logs/cheeseshirt-api.log
       - LOG_LEVEL=${LOG_LEVEL:-debug}
+      - MONGER_CONFIG_PATH=/app/monger/monger.json
     volumes:
       - ./logs:/app/logs
+      - ./monger:/app/monger:ro
     ports:
       - "127.0.0.1:3001:3001"
     healthcheck:
