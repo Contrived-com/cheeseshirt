@@ -286,6 +286,47 @@ remember: collect affirmation, size, and phrase.  when you have all three, set r
   }
 }
 
+// Test OpenAI connection
+export async function testOpenAIConnection(): Promise<{ ok: boolean; model?: string; latencyMs?: number; error?: string }> {
+  const startTime = Date.now();
+  
+  try {
+    logger.info('Testing OpenAI connection', { model: config.openaiModel });
+    
+    const completion = await openai.chat.completions.create({
+      model: config.openaiModel,
+      messages: [{ role: 'user', content: 'Say "ok" and nothing else.' }],
+      max_tokens: 5,
+      temperature: 0,
+    });
+    
+    const latencyMs = Date.now() - startTime;
+    const response = completion.choices[0]?.message?.content;
+    
+    logger.info('OpenAI connection test successful', { 
+      latencyMs, 
+      response,
+      model: completion.model 
+    });
+    
+    return { 
+      ok: true, 
+      model: completion.model,
+      latencyMs
+    };
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+    
+    logger.openaiError(error, { context: 'connection test', latencyMs });
+    
+    return { 
+      ok: false, 
+      latencyMs,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 // Get referral-aware response line
 export function getReferralResponseLine(status: string, discountPercentage: number): string {
   switch (status) {

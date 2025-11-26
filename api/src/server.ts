@@ -1,4 +1,5 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http';
+import type { Socket } from 'net';
 import { v4 as uuidv4 } from 'uuid';
 import { config, validateConfig } from './config.js';
 import { logger } from './logger.js';
@@ -15,8 +16,9 @@ import {
   addMessage,
   CustomerRow
 } from './db.js';
-import { getMongerReply, getOpeningLine, getReferralResponseLine, MongerResponse } from './monger.js';
+import { getMongerReply, getOpeningLine, getReferralResponseLine, MongerResponse, testOpenAIConnection } from './monger.js';
 import { createCheckout } from './shopify.js';
+import { db } from './db.js';
 
 // Initialize logger before anything else
 logger.init(config.logPath || undefined, config.logLevel);
@@ -482,6 +484,55 @@ async function handleGetSession(req: IncomingMessage, res: ServerResponse, sessi
   });
 }
 
+// Status/diagnostic endpoint
+async function handleStatus(req: IncomingMessage, res: ServerResponse) {
+  logger.info('Status check requested');
+  
+  const status: Record<string, unknown> = {
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    node: process.version,
+    pid: process.pid,
+  };
+  
+  // Test database
+  try {
+    const dbTest = db.prepare('SELECT 1 as test').get() as { test: number };
+    status.database = { ok: true, test: dbTest.test };
+  } catch (error) {
+    status.database = { 
+      ok: false, 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+  
+  // Test OpenAI
+  try {
+    const openaiResult = await testOpenAIConnection();
+    status.openai = openaiResult;
+  } catch (error) {
+    status.openai = { 
+      ok: false, 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+  
+  // Config (sanitized)
+  status.config = {
+    hasOpenAiKey: !!config.openaiApiKey,
+    openAiKeyPrefix: config.openaiApiKey ? config.openaiApiKey.substring(0, 7) + '...' : '(missing)',
+    openAiModel: config.openaiModel,
+    hasShopifyToken: !!config.shopifyAccessToken,
+    databasePath: config.databasePath,
+    logPath: config.logPath,
+    logLevel: config.logLevel,
+  };
+  
+  logger.info('Status check complete', status);
+  sendJson(res, status);
+}
+
 // Handle time waster marking (called when session ends without purchase)
 async function handleMarkTimeWaster(req: IncomingMessage, res: ServerResponse) {
   const body = await parseBody<{ sessionId: string }>(req);
@@ -549,6 +600,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       await handleMarkTimeWaster(req, res);
     } else if (path === '/api/health' && method === 'GET') {
       sendJson(res, { status: 'ok', timestamp: new Date().toISOString() });
+    } else if (path === '/api/status' && method === 'GET') {
+      await handleStatus(req, res);
     } else {
       sendError(res, 'Not found', 404);
     }
@@ -585,8 +638,15 @@ server.listen(config.port, config.host, () => {
       'POST /api/referral-lookup',
       'POST /api/create-checkout',
       'GET  /api/profile',
-      'GET  /api/health'
+      'GET  /api/health',
+      'GET  /api/status (diagnostic)'
     ]
   });
+});
+
+// Log all connections at the socket level
+server.on('connection', (socket: Socket) => {
+  const remoteAddr = socket.remoteAddress;
+  logger.debug('New TCP connection', { remoteAddress: remoteAddr });
 });
 
