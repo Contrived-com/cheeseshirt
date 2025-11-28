@@ -90,6 +90,12 @@ try {
     db.exec('ALTER TABLE sessions ADD COLUMN checkout_state TEXT');
   }
   
+  // Migration: add diagnostic_mode column if it doesn't exist
+  if (!sessionCols.find(c => c.name === 'diagnostic_mode')) {
+    dbLog('Migrating: adding diagnostic_mode column to sessions');
+    db.exec('ALTER TABLE sessions ADD COLUMN diagnostic_mode INTEGER DEFAULT 0');
+  }
+  
   dbLog('Schema ready');
 } catch (error) {
   dbLog('FATAL: Failed to create schema', { 
@@ -186,6 +192,10 @@ export function updateSessionState(sessionId: string, updates: Partial<SessionUp
     fields.push('checkout_state = ?');
     values.push(updates.checkoutState);
   }
+  if (updates.diagnosticMode !== undefined) {
+    fields.push('diagnostic_mode = ?');
+    values.push(updates.diagnosticMode ? 1 : 0);
+  }
   
   fields.push('last_message_at = CURRENT_TIMESTAMP');
   values.push(sessionId);
@@ -280,6 +290,7 @@ export interface SessionRow {
   referrer_email: string | null;
   discount_code: string | null;
   checkout_state: string | null;
+  diagnostic_mode: number;
 }
 
 export interface MessageRow {
@@ -304,5 +315,6 @@ export interface SessionUpdates {
   referrerEmail: string | null;
   discountCode: string | null;
   checkoutState: string | null;
+  diagnosticMode: boolean;
 }
 

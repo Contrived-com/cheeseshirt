@@ -335,3 +335,98 @@ export function getFallbackResponse() {
     mood: "neutral"
   };
 }
+
+// =============================================================================
+// Diagnostic Mode
+// =============================================================================
+
+// Trigger phrases for entering/exiting diagnostic mode
+const DIAGNOSTIC_ENTER_PHRASES = ['diagnostic', 'enter diagnostic', 'diagnostic mode'];
+const DIAGNOSTIC_EXIT_PHRASES = ['leave diagnostic', 'exit diagnostic', 'back to character', 'resume character'];
+
+/**
+ * Check if user input should trigger diagnostic mode entry.
+ */
+export function shouldEnterDiagnostic(userInput: string): boolean {
+  const lower = userInput.toLowerCase().trim();
+  return DIAGNOSTIC_ENTER_PHRASES.some(phrase => lower === phrase || lower.startsWith(phrase + ' '));
+}
+
+/**
+ * Check if user input should trigger diagnostic mode exit.
+ */
+export function shouldExitDiagnostic(userInput: string): boolean {
+  const lower = userInput.toLowerCase().trim();
+  return DIAGNOSTIC_EXIT_PHRASES.some(phrase => lower === phrase || lower.startsWith(phrase));
+}
+
+/**
+ * Get a response in diagnostic mode via the Monger service.
+ */
+export async function getDiagnosticReply(
+  sessionId: string,
+  userInput: string
+): Promise<{ reply: string; diagnosticData?: Record<string, unknown> }> {
+  // Get conversation history for diagnostic mode
+  const messageHistory = getSessionMessages(sessionId, 10).reverse();
+  
+  logger.debug('Diagnostic chat request', {
+    sessionId: sessionId.substring(0, 8) + '...',
+    userInputLength: userInput.length,
+  });
+  
+  try {
+    const response = await mongerClient.diagnosticChat({
+      user_input: userInput,
+      conversation_history: messageHistory.map(msg => ({
+        role: msg.role as 'user' | 'assistant',
+        content: msg.content,
+      })),
+    });
+    
+    // Store messages
+    addMessage(sessionId, 'user', userInput);
+    addMessage(sessionId, 'assistant', response.reply);
+    
+    return {
+      reply: response.reply,
+      diagnosticData: response.diagnostic_data || undefined,
+    };
+    
+  } catch (error) {
+    logger.error('Diagnostic chat error', {
+      sessionId: sessionId.substring(0, 8) + '...',
+      error: error instanceof Error ? error.message : String(error),
+    });
+    
+    return {
+      reply: `Diagnostic mode error: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+/**
+ * Get the diagnostic mode entry message.
+ */
+export function getDiagnosticEntryMessage(): string {
+  return `[DIAGNOSTIC MODE ENABLED]
+
+I've dropped character. I'm now a helpful assistant for the cheeseshirt system.
+
+You can ask me about:
+• Service health and versions
+• Log files (try "show me the api logs")  
+• System status
+• Troubleshooting help
+
+Say "leave diagnostic" to return me to character.`;
+}
+
+/**
+ * Get the diagnostic mode exit message.
+ */
+export function getDiagnosticExitMessage(): string {
+  return `[DIAGNOSTIC MODE DISABLED]
+
+...where was i.  right.  you here for a shirt?`;
+}

@@ -4,12 +4,16 @@ Monger Service - FastAPI application.
 This service handles all LLM interactions for the Monger character.
 It abstracts the underlying LLM provider, making it easy to swap between
 OpenAI, local models, or other providers.
+
+Includes diagnostic mode for system introspection.
 """
 import json
 import logging
 import sys
+import httpx
 from pathlib import Path
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +30,10 @@ from .models import (
     ReferralLineRequest,
     ReferralLineResponse,
     HealthResponse,
+    VersionResponse,
+    LogsResponse,
+    DiagnosticChatRequest,
+    DiagnosticChatResponse,
 )
 from .character import (
     build_system_prompt,
@@ -82,6 +90,15 @@ settings = get_settings()
 logger = setup_logging()
 
 
+# Log file mappings for diagnostics
+LOG_FILES = {
+    "monger": "cheeseshirt-monger.log",
+    "api": "cheeseshirt-api.log",
+    "web": "cheeseshirt-web.log",
+    "web-error": "cheeseshirt-web-error.log",
+}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown."""
@@ -113,7 +130,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Monger Service",
     description="LLM-powered character service for the Monger",
-    version="1.0.0",
+    version=settings.version,
     lifespan=lifespan,
 )
 
@@ -127,13 +144,13 @@ app.add_middleware(
 )
 
 
+# =============================================================================
+# Health & Version Endpoints
+# =============================================================================
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """
-    Health check endpoint.
-    
-    Tests the LLM connection and returns status.
-    """
+    """Health check endpoint. Tests the LLM connection and returns status."""
     provider = get_llm_provider()
     ok, error, latency_ms = await provider.test_connection()
     
@@ -146,6 +163,218 @@ async def health_check():
         error=error,
     )
 
+
+@app.get("/version", response_model=VersionResponse)
+async def version():
+    """Return version information for this service."""
+    provider = get_llm_provider()
+    return VersionResponse(
+        service="cheeseshirt-monger",
+        version=settings.version,
+        llm_provider=provider.provider_name,
+        llm_model=provider.model_name,
+    )
+
+
+# =============================================================================
+# Diagnostic Endpoints
+# =============================================================================
+
+@app.get("/diagnostic/logs/{service}")
+async def get_service_logs(service: str, lines: int = 50) -> LogsResponse:
+    """
+    Get the last N lines from a service's log file.
+    
+    Services: monger, api, web, web-error
+    """
+    if service not in LOG_FILES:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Unknown service '{service}'. Available: {list(LOG_FILES.keys())}"
+        )
+    
+    log_file = LOG_FILES[service]
+    log_path = Path(settings.logs_dir) / log_file
+    
+    if not log_path.exists():
+        return LogsResponse(
+            service=service,
+            log_file=log_file,
+            lines=0,
+            content="",
+            error=f"Log file not found: {log_path}",
+        )
+    
+    try:
+        # Read last N lines
+        with open(log_path, "r") as f:
+            all_lines = f.readlines()
+            last_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+            content = "".join(last_lines)
+        
+        return LogsResponse(
+            service=service,
+            log_file=log_file,
+            lines=len(last_lines),
+            content=content,
+        )
+    except Exception as e:
+        return LogsResponse(
+            service=service,
+            log_file=log_file,
+            lines=0,
+            content="",
+            error=str(e),
+        )
+
+
+@app.get("/diagnostic/services")
+async def get_all_services_status() -> dict:
+    """Get health and version status of all services."""
+    results = {
+        "monger": {"health": None, "version": None},
+        "api": {"health": None, "version": None},
+        "web": {"health": None, "version": None},
+    }
+    
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        # Monger (self)
+        try:
+            provider = get_llm_provider()
+            ok, error, latency_ms = await provider.test_connection()
+            results["monger"]["health"] = {
+                "status": "ok" if ok else "degraded",
+                "llm_ok": ok,
+                "llm_latency_ms": latency_ms,
+                "error": error,
+            }
+            results["monger"]["version"] = {
+                "version": settings.version,
+                "llm_provider": provider.provider_name,
+                "llm_model": provider.model_name,
+            }
+        except Exception as e:
+            results["monger"]["health"] = {"status": "error", "error": str(e)}
+        
+        # API
+        try:
+            resp = await client.get(f"{settings.api_service_url}/api/health")
+            results["api"]["health"] = resp.json()
+        except Exception as e:
+            results["api"]["health"] = {"status": "error", "error": str(e)}
+        
+        try:
+            resp = await client.get(f"{settings.api_service_url}/api/version")
+            results["api"]["version"] = resp.json()
+        except Exception as e:
+            results["api"]["version"] = {"error": str(e)}
+        
+        # Web
+        try:
+            resp = await client.get(f"{settings.web_service_url}/health")
+            results["web"]["health"] = {
+                "status": "ok" if resp.status_code == 200 else "error",
+                "status_code": resp.status_code,
+            }
+        except Exception as e:
+            results["web"]["health"] = {"status": "error", "error": str(e)}
+        
+        try:
+            resp = await client.get(f"{settings.web_service_url}/version")
+            results["web"]["version"] = resp.json()
+        except Exception as e:
+            results["web"]["version"] = {"error": str(e)}
+    
+    return results
+
+
+@app.post("/diagnostic/chat", response_model=DiagnosticChatResponse)
+async def diagnostic_chat(request: DiagnosticChatRequest):
+    """
+    Diagnostic mode chat - the Monger drops character and helps debug.
+    
+    The LLM has access to service status, versions, and can read logs.
+    """
+    logger.info("Diagnostic chat request: %s", request.user_input[:100])
+    
+    # Gather current system status
+    services_status = await get_all_services_status()
+    
+    # Build diagnostic context
+    diagnostic_context = f"""You are now in DIAGNOSTIC MODE. You are no longer the Monger character.
+You are a helpful assistant for the cheeseshirt system administrator.
+
+Current system status:
+{json.dumps(services_status, indent=2)}
+
+Available log files: {list(LOG_FILES.keys())}
+
+You can help the admin by:
+- Explaining the current status of services
+- Suggesting troubleshooting steps
+- Explaining what different components do
+- Reading logs if asked (tell them to ask for specific logs like "show me the api logs")
+
+If the user asks to see logs, respond with a JSON block like this to trigger log fetching:
+{{"action": "fetch_logs", "service": "api", "lines": 50}}
+
+Be helpful, technical, and concise. You're talking to a developer."""
+
+    provider = get_llm_provider()
+    
+    # Build messages
+    messages = [
+        LLMMessage(role="system", content=diagnostic_context),
+    ]
+    
+    # Add conversation history
+    for msg in request.conversation_history:
+        messages.append(LLMMessage(role=msg.role, content=msg.content))
+    
+    # Add current user input
+    messages.append(LLMMessage(role="user", content=request.user_input))
+    
+    try:
+        response = await provider.chat_completion(messages, json_mode=False)
+        
+        # Check if the response contains a log fetch request
+        diagnostic_data = None
+        reply = response.content
+        
+        # Look for JSON action blocks in the response
+        if '{"action": "fetch_logs"' in reply:
+            try:
+                import re
+                match = re.search(r'\{[^}]*"action":\s*"fetch_logs"[^}]*\}', reply)
+                if match:
+                    action = json.loads(match.group())
+                    if action.get("action") == "fetch_logs":
+                        service = action.get("service", "api")
+                        lines = action.get("lines", 50)
+                        logs = await get_service_logs(service, lines)
+                        diagnostic_data = {"logs": logs.model_dump()}
+                        # Remove the JSON from the reply and add log content
+                        reply = re.sub(r'\{[^}]*"action":\s*"fetch_logs"[^}]*\}', '', reply)
+                        reply = reply.strip() + f"\n\n--- {service} logs (last {logs.lines} lines) ---\n{logs.content}"
+            except Exception as e:
+                logger.warning("Failed to parse log fetch action: %s", e)
+        
+        return DiagnosticChatResponse(
+            reply=reply,
+            diagnostic_data=diagnostic_data or {"services": services_status},
+        )
+        
+    except Exception as e:
+        logger.error("Diagnostic chat error: %s", e, exc_info=True)
+        return DiagnosticChatResponse(
+            reply=f"Error processing diagnostic request: {str(e)}",
+            diagnostic_data={"error": str(e)},
+        )
+
+
+# =============================================================================
+# Character Chat Endpoints (existing)
+# =============================================================================
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
@@ -257,11 +486,7 @@ async def chat(request: ChatRequest):
 
 @app.post("/opening-line", response_model=OpeningLineResponse)
 async def opening_line(request: OpeningLineRequest):
-    """
-    Get an opening line for the Monger.
-    
-    Returns an appropriate greeting based on customer history.
-    """
+    """Get an opening line for the Monger."""
     line = get_opening_line(
         total_shirts_bought=request.total_shirts_bought,
         is_time_waster=request.is_time_waster,
@@ -281,11 +506,7 @@ async def opening_line(request: OpeningLineRequest):
 
 @app.post("/referral-line", response_model=ReferralLineResponse)
 async def referral_line(request: ReferralLineRequest):
-    """
-    Get the Monger's response to a referral lookup.
-    
-    Returns an appropriate line based on the referrer's status.
-    """
+    """Get the Monger's response to a referral lookup."""
     line = get_referral_response_line(
         status=request.status,
         discount_percentage=request.discount_percentage,
@@ -311,4 +532,3 @@ if __name__ == "__main__":
         reload=True,
         log_level=settings.log_level.lower(),
     )
-

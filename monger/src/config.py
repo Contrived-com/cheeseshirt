@@ -30,6 +30,16 @@ class Settings(BaseSettings):
     log_level: str = "info"
     log_path: str = ""  # e.g. /app/logs/monger.log
     
+    # Version
+    version: str = "1.0.0"
+    
+    # Service URLs for diagnostics
+    api_service_url: str = "http://api:3001"
+    web_service_url: str = "http://web:80"
+    
+    # Log paths for diagnostics (inside container)
+    logs_dir: str = "/app/logs"
+    
     class Config:
         env_prefix = ""
         case_sensitive = False

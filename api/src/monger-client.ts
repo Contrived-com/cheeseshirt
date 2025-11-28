@@ -94,6 +94,23 @@ export interface HealthResponse {
   error: string | null;
 }
 
+export interface DiagnosticChatRequest {
+  user_input: string;
+  conversation_history: ConversationMessage[];
+}
+
+export interface DiagnosticChatResponse {
+  reply: string;
+  diagnostic_data: Record<string, unknown> | null;
+}
+
+export interface VersionResponse {
+  service: string;
+  version: string;
+  llm_provider: string;
+  llm_model: string;
+}
+
 /**
  * Make a request to the Monger service.
  */
@@ -180,5 +197,19 @@ export async function getReferralLine(request: ReferralLineRequest): Promise<Ref
  */
 export async function testConnection(): Promise<HealthResponse> {
   return mongerRequest<HealthResponse>('GET', '/health');
+}
+
+/**
+ * Get version info from the Monger service.
+ */
+export async function getVersion(): Promise<VersionResponse> {
+  return mongerRequest<VersionResponse>('GET', '/version');
+}
+
+/**
+ * Diagnostic mode chat - Monger drops character and helps debug.
+ */
+export async function diagnosticChat(request: DiagnosticChatRequest): Promise<DiagnosticChatResponse> {
+  return mongerRequest<DiagnosticChatResponse>('POST', '/diagnostic/chat', request);
 }
 

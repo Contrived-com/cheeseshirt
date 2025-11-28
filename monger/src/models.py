@@ -102,3 +102,54 @@ class HealthResponse(BaseModel):
     llm_latency_ms: Optional[int] = None
     error: Optional[str] = None
 
+
+class VersionResponse(BaseModel):
+    """Version information response."""
+    service: str
+    version: str
+    llm_provider: str
+    llm_model: str
+
+
+class ServiceHealth(BaseModel):
+    """Health status of a single service."""
+    service: str
+    status: str
+    url: str
+    error: Optional[str] = None
+
+
+class ServiceVersion(BaseModel):
+    """Version info of a single service."""
+    service: str
+    version: Optional[str] = None
+    error: Optional[str] = None
+
+
+class LogsResponse(BaseModel):
+    """Response containing log file contents."""
+    service: str
+    log_file: str
+    lines: int
+    content: str
+    error: Optional[str] = None
+
+
+class DiagnosticsResponse(BaseModel):
+    """Full diagnostics report."""
+    services: dict
+    versions: dict
+    logs: dict
+
+
+class DiagnosticChatRequest(BaseModel):
+    """Request for diagnostic mode chat."""
+    user_input: str
+    conversation_history: list[ConversationMessage] = Field(default_factory=list)
+
+
+class DiagnosticChatResponse(BaseModel):
+    """Response from diagnostic mode chat."""
+    reply: str
+    diagnostic_data: Optional[dict] = None
+

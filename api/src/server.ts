@@ -16,7 +16,20 @@ import {
   addMessage,
   CustomerRow
 } from './db.js';
-import { getMongerReply, getOpeningLine, getOpeningLineAsync, getReferralResponseLine, getReferralResponseLineAsync, MongerResponse, testMongerServiceConnection } from './monger.js';
+import { 
+  getMongerReply, 
+  getOpeningLine, 
+  getOpeningLineAsync, 
+  getReferralResponseLine, 
+  getReferralResponseLineAsync, 
+  MongerResponse, 
+  testMongerServiceConnection,
+  shouldEnterDiagnostic,
+  shouldExitDiagnostic,
+  getDiagnosticReply,
+  getDiagnosticEntryMessage,
+  getDiagnosticExitMessage,
+} from './monger.js';
 import { 
   createPaymentIntent, 
   updatePaymentIntentShipping,
@@ -267,14 +280,117 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
   }
   
   const customer = getOrCreateCustomer(session.customer_id);
+  const inDiagnosticMode = session.diagnostic_mode === 1;
   
   logger.debug('Chat: processing', { 
     sessionId: body.sessionId.substring(0, 8) + '...', 
     inputLength: body.userInput.length,
-    userInputPreview: body.userInput.substring(0, 50)
+    userInputPreview: body.userInput.substring(0, 50),
+    diagnosticMode: inDiagnosticMode
   });
   
-  // Check if time waster trying to come back
+  // Check for diagnostic mode entry/exit
+  if (!inDiagnosticMode && shouldEnterDiagnostic(body.userInput)) {
+    logger.info('Chat: entering diagnostic mode', { sessionId: body.sessionId.substring(0, 8) + '...' });
+    updateSessionState(body.sessionId, {
+      conversationState: 'diagnostic',
+      diagnosticMode: true,
+      collectedAffirmation: session.collected_affirmation === 1,
+      collectedSize: session.collected_size,
+      collectedPhrase: session.collected_phrase,
+      referrerEmail: session.referrer_email,
+      discountCode: session.discount_code,
+      checkoutState: session.checkout_state,
+    });
+    
+    return sendJson(res, {
+      mongerReply: getDiagnosticEntryMessage(),
+      conversationState: 'diagnostic',
+      needsSize: !session.collected_size,
+      needsPhrase: !session.collected_phrase,
+      needsAffirmation: session.collected_affirmation !== 1,
+      readyForCheckout: false,
+      readyForPayment: false,
+      wantsReferralCheck: null,
+      mood: 'neutral',
+      collectedSize: session.collected_size,
+      collectedPhrase: session.collected_phrase,
+      checkout: session.checkout_state ? JSON.parse(session.checkout_state) : {
+        shipping: { name: null, line1: null, city: null, state: null, zip: null, country: 'US' },
+        email: null
+      },
+      diagnosticMode: true,
+    });
+  }
+  
+  if (inDiagnosticMode && shouldExitDiagnostic(body.userInput)) {
+    logger.info('Chat: exiting diagnostic mode', { sessionId: body.sessionId.substring(0, 8) + '...' });
+    updateSessionState(body.sessionId, {
+      conversationState: 'conversation',
+      diagnosticMode: false,
+      collectedAffirmation: session.collected_affirmation === 1,
+      collectedSize: session.collected_size,
+      collectedPhrase: session.collected_phrase,
+      referrerEmail: session.referrer_email,
+      discountCode: session.discount_code,
+      checkoutState: session.checkout_state,
+    });
+    
+    return sendJson(res, {
+      mongerReply: getDiagnosticExitMessage(),
+      conversationState: 'conversation',
+      needsSize: !session.collected_size,
+      needsPhrase: !session.collected_phrase,
+      needsAffirmation: session.collected_affirmation !== 1,
+      readyForCheckout: false,
+      readyForPayment: false,
+      wantsReferralCheck: null,
+      mood: 'neutral',
+      collectedSize: session.collected_size,
+      collectedPhrase: session.collected_phrase,
+      checkout: session.checkout_state ? JSON.parse(session.checkout_state) : {
+        shipping: { name: null, line1: null, city: null, state: null, zip: null, country: 'US' },
+        email: null
+      },
+      diagnosticMode: false,
+    });
+  }
+  
+  // Handle diagnostic mode chat
+  if (inDiagnosticMode) {
+    try {
+      const diagnosticResponse = await getDiagnosticReply(body.sessionId, body.userInput);
+      
+      return sendJson(res, {
+        mongerReply: diagnosticResponse.reply,
+        conversationState: 'diagnostic',
+        needsSize: false,
+        needsPhrase: false,
+        needsAffirmation: false,
+        readyForCheckout: false,
+        readyForPayment: false,
+        wantsReferralCheck: null,
+        mood: 'neutral',
+        collectedSize: session.collected_size,
+        collectedPhrase: session.collected_phrase,
+        checkout: session.checkout_state ? JSON.parse(session.checkout_state) : {
+          shipping: { name: null, line1: null, city: null, state: null, zip: null, country: 'US' },
+          email: null
+        },
+        diagnosticMode: true,
+        diagnosticData: diagnosticResponse.diagnosticData,
+      });
+      
+    } catch (error) {
+      logger.error('Chat: diagnostic handler error', { 
+        sessionId: body.sessionId.substring(0, 8) + '...',
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return sendError(res, 'Diagnostic error', 500);
+    }
+  }
+  
+  // Check if time waster trying to come back (only in normal mode)
   if (isRecentTimeWaster(session.customer_id, config.timeWasterThresholdHours)) {
     logger.info('Chat: blocked time waster', { customerId: session.customer_id.substring(0, 8) + '...' });
     return sendJson(res, {
@@ -296,6 +412,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
     });
   }
   
+  // Normal character chat
   try {
     const mongerResponse = await getMongerReply(body.sessionId, body.userInput, customer);
     
@@ -816,6 +933,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       await handleMarkTimeWaster(req, res);
     } else if (path === '/api/health' && method === 'GET') {
       sendJson(res, { status: 'ok', timestamp: new Date().toISOString() });
+    } else if (path === '/api/version' && method === 'GET') {
+      sendJson(res, { 
+        service: 'cheeseshirt-api', 
+        version: '1.0.0',
+        node: process.version,
+      });
     } else if (path === '/api/status' && method === 'GET') {
       await handleStatus(req, res);
     } else {
