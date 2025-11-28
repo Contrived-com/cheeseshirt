@@ -56,7 +56,7 @@ def build_system_prompt() -> str:
     
     if "neutral" in emotional_modes:
         m = emotional_modes["neutral"]
-        emotional_section.append(f"- neutral-business: {m['triggers']}.  {m['behavior']}.")
+        emotional_section.append(f"- neutral: {m['triggers']}.  {m['behavior']}.")
     
     if "warm" in emotional_modes:
         m = emotional_modes["warm"]

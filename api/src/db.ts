@@ -213,6 +213,10 @@ export function addMessage(sessionId: string, role: 'user' | 'assistant', conten
   `).run(sessionId, role, content);
 }
 
+export function clearSessionMessages(sessionId: string) {
+  db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+}
+
 export function getSessionMessages(sessionId: string, limit = 20) {
   return db.prepare(`
     SELECT role, content FROM messages 

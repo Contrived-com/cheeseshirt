@@ -14,6 +14,7 @@ import {
   createOrUpdateReferral,
   updateSessionState,
   addMessage,
+  clearSessionMessages,
   CustomerRow
 } from './db.js';
 import { 
@@ -325,6 +326,11 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
   
   if (inDiagnosticMode && shouldExitDiagnostic(body.userInput)) {
     logger.info('Chat: exiting diagnostic mode', { sessionId: body.sessionId.substring(0, 8) + '...' });
+    
+    // Clear conversation history to avoid confusing the LLM with diagnostic context
+    clearSessionMessages(body.sessionId);
+    logger.debug('Chat: cleared session messages for clean exit from diagnostic mode');
+    
     updateSessionState(body.sessionId, {
       conversationState: 'conversation',
       diagnosticMode: false,

@@ -16,6 +16,7 @@ COPY index.html ./
 COPY tsconfig.json ./
 COPY vite.config.ts ./
 COPY src ./src
+COPY public ./public
 
 # Build static files
 RUN npm run build
