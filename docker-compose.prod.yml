@@ -17,7 +17,7 @@ services:
     environment:
       - HOST=0.0.0.0
       - PORT=3002
-      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_LEVEL=${LOG_LEVEL}
       - LOG_PATH=/app/logs/cheeseshirt-monger.log
       - LLM_PROVIDER=${LLM_PROVIDER:-openai}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -62,7 +62,7 @@ services:
       - COOKIE_SECURE=${COOKIE_SECURE:-true}
       - TIME_WASTER_THRESHOLD_HOURS=${TIME_WASTER_THRESHOLD_HOURS:-24}
       - LOG_PATH=/app/logs/cheeseshirt-api.log
-      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       - ${LOG_PATH:-~/logs}:/app/logs
       - cheeseshirt-data:/app/data

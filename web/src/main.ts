@@ -49,6 +49,8 @@ interface SessionState {
   paymentIntentId: string | null;
   clientSecret: string | null;
   paymentProcessing: boolean;
+  // Diagnostic mode (no typewriter, technical assistant)
+  diagnosticMode: boolean;
 }
 
 const state: SessionState = {
@@ -68,6 +70,7 @@ const state: SessionState = {
   paymentIntentId: null,
   clientSecret: null,
   paymentProcessing: false,
+  diagnosticMode: false,
 };
 
 // Stripe elements
@@ -272,6 +275,7 @@ async function sendMessage(userInput: string): Promise<void> {
       collectedSize: string | null;
       collectedPhrase: string | null;
       checkout: CheckoutState;
+      diagnosticMode?: boolean;
     }
     
     const response = await apiPost<ChatResponse>('/chat', {
@@ -302,8 +306,14 @@ async function sendMessage(userInput: string): Promise<void> {
     state.readyForPayment = response.readyForPayment;
     state.checkout = response.checkout;
     
-    // Display Monger's reply
-    await addMessage(response.mongerReply, 'monger', true);
+    // Track diagnostic mode
+    if (response.diagnosticMode !== undefined) {
+      state.diagnosticMode = response.diagnosticMode;
+    }
+    
+    // Display Monger's reply (skip typewriter in diagnostic mode)
+    const useTypewriter = !state.diagnosticMode;
+    await addMessage(response.mongerReply, 'monger', useTypewriter);
     
     // Handle referral lookup if needed
     if (response.wantsReferralCheck) {
