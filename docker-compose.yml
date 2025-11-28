@@ -24,12 +24,15 @@ services:
       - HOST=0.0.0.0
       - PORT=3002
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_PATH=/app/logs/monger.log
       - LLM_PROVIDER=${LLM_PROVIDER:-openai}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
       - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.7}
       - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS:-500}
       - CHARACTER_CONFIG_PATH=/app/config/monger.json
+    volumes:
+      - ${LOG_PATH:-~/logs}:/app/logs
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:3002/health').raise_for_status()"]
       interval: 30s
@@ -65,7 +68,7 @@ services:
       - LOG_PATH=/app/logs/cheeseshirt-api.log
       - LOG_LEVEL=${LOG_LEVEL:-debug}
     volumes:
-      - ./logs:/app/logs
+      - ${LOG_PATH:-~/logs}:/app/logs
       - api-data:/app/data
     ports:
       - "127.0.0.1:3001:3001"
@@ -113,7 +116,9 @@ services:
   #     - HOST=0.0.0.0
   #     - PORT=8002
   #     - LOG_LEVEL=${LOG_LEVEL:-INFO}
+  #     - LOG_PATH=/app/logs/worker-stripe-orders.log
   #   volumes:
+  #     - ${LOG_PATH:-~/logs}:/app/logs
   #     - stripe-orders:/app/Orders
   #     - stripe-state:/app/state
   #   ports:

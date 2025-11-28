@@ -13,6 +13,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 COPY config/ ./config/
 
+# Create non-root user (UID 1000 to match typical host user)
+RUN groupadd -g 1000 monger && \
+    useradd -u 1000 -g monger -s /bin/bash monger
+
+# Create logs directory
+RUN mkdir -p /app/logs && chown -R monger:monger /app/logs
+
+USER monger
+
 # Environment defaults
 ENV HOST=0.0.0.0
 ENV PORT=3002

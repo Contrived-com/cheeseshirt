@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     
     # Logging
     log_level: str = "info"
+    log_path: str = ""  # e.g. /app/logs/monger.log
     
     class Config:
         env_prefix = ""

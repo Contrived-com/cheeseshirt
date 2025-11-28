@@ -7,6 +7,8 @@ OpenAI, local models, or other providers.
 """
 import json
 import logging
+import sys
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -35,13 +37,49 @@ from .character import (
 )
 from .llm import get_llm_provider, LLMMessage
 
+
+def setup_logging():
+    """Configure logging with file and console handlers."""
+    settings = get_settings()
+    log_level = getattr(logging, settings.log_level.upper())
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    
+    # Get root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    
+    # Clear existing handlers
+    root_logger.handlers.clear()
+    
+    # Console handler (always)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+    
+    # File handler (if configured)
+    if settings.log_path:
+        try:
+            log_path = Path(settings.log_path)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.FileHandler(log_path)
+            file_handler.setLevel(log_level)
+            file_handler.setFormatter(formatter)
+            root_logger.addHandler(file_handler)
+            root_logger.info(f"Logging to file: {log_path}")
+        except Exception as e:
+            root_logger.error(f"Failed to set up file logging: {e}")
+    
+    return logging.getLogger(__name__)
+
+
 # Configure logging
 settings = get_settings()
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper()),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+logger = setup_logging()
 
 
 @asynccontextmanager

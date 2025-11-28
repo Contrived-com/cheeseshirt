@@ -36,14 +36,10 @@ RUN npm ci --omit=dev && npm cache clean --force
 # Copy built files
 COPY --from=builder /app/dist ./dist
 
-# Create non-root user
-RUN addgroup -g 1001 -S monger && \
-    adduser -S monger -u 1001 -G monger
+# Create data and logs directories (use node user which is UID 1000 in node:alpine)
+RUN mkdir -p /app/data /app/logs && chown -R node:node /app/data /app/logs
 
-# Create data and logs directories
-RUN mkdir -p /app/data /app/logs && chown -R monger:monger /app/data /app/logs
-
-USER monger
+USER node
 
 # Environment defaults (override at runtime)
 ENV NODE_ENV=production \
