@@ -14,21 +14,29 @@ services:
     image: ghcr.io/contrived-com/cheeseshirt-monger:latest
     container_name: cheeseshirt-monger
     restart: unless-stopped
-    volumes:
-      - monger-config:/shared
+    environment:
+      - HOST=0.0.0.0
+      - PORT=3002
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.7}
+      - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS:-500}
+      - CHARACTER_CONFIG_PATH=/app/config/monger.json
     healthcheck:
-      test: ["CMD", "test", "-f", "/shared/monger.json"]
-      interval: 5s
-      timeout: 2s
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:3002/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
       retries: 3
-      start_period: 2s
+      start_period: 15s
     networks:
       - cheeseshirt
     logging:
       driver: "json-file"
       options:
-        max-size: "5m"
-        max-file: "2"
+        max-size: "10m"
+        max-file: "3"
 
   api:
     image: ghcr.io/contrived-com/cheeseshirt-api:latest
@@ -41,26 +49,20 @@ services:
       - NODE_ENV=production
       - PORT=3001
       - HOST=0.0.0.0
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
-      - SHOPIFY_STORE_URL=${SHOPIFY_STORE_URL}
-      - SHOPIFY_ACCESS_TOKEN=${SHOPIFY_ACCESS_TOKEN}
-      - SHOPIFY_API_VERSION=${SHOPIFY_API_VERSION:-2024-01}
+      - MONGER_SERVICE_URL=http://monger:3002
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - SHIRT_PRICE_CENTS=${SHIRT_PRICE_CENTS:-3500}
+      - SITE_URL=${SITE_URL:-https://cheeseshirt.com}
       - DATABASE_PATH=/app/data/cheeseshirt.db
       - COOKIE_SECURE=${COOKIE_SECURE:-true}
       - TIME_WASTER_THRESHOLD_HOURS=${TIME_WASTER_THRESHOLD_HOURS:-24}
-      - SHOPIFY_VARIANT_XS=${SHOPIFY_VARIANT_XS}
-      - SHOPIFY_VARIANT_S=${SHOPIFY_VARIANT_S}
-      - SHOPIFY_VARIANT_M=${SHOPIFY_VARIANT_M}
-      - SHOPIFY_VARIANT_L=${SHOPIFY_VARIANT_L}
-      - SHOPIFY_VARIANT_XL=${SHOPIFY_VARIANT_XL}
-      - SHOPIFY_VARIANT_2XL=${SHOPIFY_VARIANT_2XL}
       - LOG_PATH=/app/logs/cheeseshirt-api.log
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      - MONGER_CONFIG_PATH=/app/monger/monger.json
     volumes:
       - cheeseshirt-logs:/app/logs
-      - monger-config:/app/monger:ro
+      - cheeseshirt-data:/app/data
     ports:
       - "127.0.0.1:3001:3001"
     healthcheck:
@@ -111,4 +113,4 @@ volumes:
       type: none
       o: bind
       device: /var/log/cheeseshirt
-  monger-config:
+  cheeseshirt-data:

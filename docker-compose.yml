@@ -20,14 +20,22 @@ services:
       dockerfile: Dockerfile
     container_name: cheeseshirt-monger
     restart: unless-stopped
-    volumes:
-      - monger-config:/shared
+    environment:
+      - HOST=0.0.0.0
+      - PORT=3002
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.7}
+      - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS:-500}
+      - CHARACTER_CONFIG_PATH=/app/config/monger.json
     healthcheck:
-      test: ["CMD", "test", "-f", "/shared/monger.json"]
-      interval: 5s
-      timeout: 2s
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:3002/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
       retries: 3
-      start_period: 2s
+      start_period: 15s
     networks:
       - cheeseshirt
 
@@ -45,8 +53,7 @@ services:
       - NODE_ENV=production
       - PORT=3001
       - HOST=0.0.0.0
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - MONGER_SERVICE_URL=http://monger:3002
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
@@ -57,10 +64,9 @@ services:
       - TIME_WASTER_THRESHOLD_HOURS=${TIME_WASTER_THRESHOLD_HOURS:-24}
       - LOG_PATH=/app/logs/cheeseshirt-api.log
       - LOG_LEVEL=${LOG_LEVEL:-debug}
-      - MONGER_CONFIG_PATH=/app/monger/monger.json
     volumes:
       - ./logs:/app/logs
-      - monger-config:/app/monger:ro
+      - api-data:/app/data
     ports:
       - "127.0.0.1:3001:3001"
     healthcheck:
@@ -126,6 +132,6 @@ networks:
     driver: bridge
 
 volumes:
-  monger-config:
+  api-data:
   stripe-orders:
   stripe-state:

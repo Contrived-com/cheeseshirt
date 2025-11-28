@@ -15,9 +15,8 @@ if (existsSync(localEnv)) {
 }
 
 export const config = {
-  // OpenAI
-  openaiApiKey: process.env.OPENAI_API_KEY || '',
-  openaiModel: process.env.OPENAI_MODEL || 'gpt-4o',
+  // Monger Service (handles all LLM interactions)
+  mongerServiceUrl: process.env.MONGER_SERVICE_URL || 'http://monger:3002',
   
   // Stripe
   stripeSecretKey: process.env.STRIPE_SECRET_KEY || '',
@@ -50,11 +49,10 @@ export const config = {
 } as const;
 
 export function validateConfig(): void {
-  const required = ['openaiApiKey', 'stripeSecretKey'];
+  const required = ['stripeSecretKey', 'mongerServiceUrl'];
   const missing = required.filter(key => !config[key as keyof typeof config]);
   
   if (missing.length > 0) {
     console.warn(`Warning: Missing configuration: ${missing.join(', ')}`);
   }
 }
-

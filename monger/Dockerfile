@@ -1,14 +1,31 @@
-# monger character config container
-# Provides the character definition to other services via shared volume
+# Monger Service - Python LLM service
+# Handles all LLM interactions for the Monger character
 
-FROM alpine:3.19
+FROM python:3.12-slim
 
-WORKDIR /monger
+WORKDIR /app
 
-# Copy the character config
-COPY monger.json ./
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# On startup, copy config to the shared volume and stay alive
-# This ensures the volume is populated before dependent services start
-CMD cp -v /monger/monger.json /shared/ && echo "monger config deployed" && tail -f /dev/null
+# Copy application code
+COPY src/ ./src/
+COPY config/ ./config/
 
+# Environment defaults
+ENV HOST=0.0.0.0
+ENV PORT=3002
+ENV LOG_LEVEL=info
+ENV LLM_PROVIDER=openai
+ENV CHARACTER_CONFIG_PATH=/app/config/monger.json
+
+# Expose the service port
+EXPOSE 3002
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:3002/health').raise_for_status()"
+
+# Run the service
+CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "3002"]

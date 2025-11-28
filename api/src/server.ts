@@ -16,7 +16,7 @@ import {
   addMessage,
   CustomerRow
 } from './db.js';
-import { getMongerReply, getOpeningLine, getReferralResponseLine, MongerResponse, testOpenAIConnection } from './monger.js';
+import { getMongerReply, getOpeningLine, getOpeningLineAsync, getReferralResponseLine, getReferralResponseLineAsync, MongerResponse, testMongerServiceConnection } from './monger.js';
 import { 
   createPaymentIntent, 
   updatePaymentIntentShipping,
@@ -189,8 +189,14 @@ async function handleSessionInit(req: IncomingMessage, res: ServerResponse) {
     totalShirtsBought: customer.total_shirts_bought 
   });
   
-  // Get opening line
-  const openingLine = getOpeningLine(customer, timeWaster);
+  // Get opening line (try async first, fallback to sync)
+  let openingLine: string;
+  try {
+    openingLine = await getOpeningLineAsync(customer, timeWaster);
+  } catch (error) {
+    // Fallback to sync version if service is unavailable
+    openingLine = getOpeningLine(customer, timeWaster);
+  }
   
   // Store opening line as first assistant message
   if (!timeWaster) {
@@ -386,7 +392,13 @@ async function handleReferralLookup(req: IncomingMessage, res: ServerResponse) {
     });
   }
   
-  const mongerLine = getReferralResponseLine(status, discountPercentage);
+  // Get the referral response line (try async first, fallback to sync)
+  let mongerLine: string;
+  try {
+    mongerLine = await getReferralResponseLineAsync(status, discountPercentage);
+  } catch (error) {
+    mongerLine = getReferralResponseLine(status, discountPercentage);
+  }
   
   const response: ReferralLookupResponse = {
     referrerStatus: status,
@@ -692,12 +704,12 @@ async function handleStatus(req: IncomingMessage, res: ServerResponse) {
     };
   }
   
-  // Test OpenAI
+  // Test Monger Service (which tests LLM connection)
   try {
-    const openaiResult = await testOpenAIConnection();
-    status.openai = openaiResult;
+    const mongerResult = await testMongerServiceConnection();
+    status.monger = mongerResult;
   } catch (error) {
-    status.openai = { 
+    status.monger = { 
       ok: false, 
       error: error instanceof Error ? error.message : String(error) 
     };
@@ -716,9 +728,7 @@ async function handleStatus(req: IncomingMessage, res: ServerResponse) {
   
   // Config (sanitized)
   status.config = {
-    hasOpenAiKey: !!config.openaiApiKey,
-    openAiKeyPrefix: config.openaiApiKey ? config.openaiApiKey.substring(0, 7) + '...' : '(missing)',
-    openAiModel: config.openaiModel,
+    mongerServiceUrl: config.mongerServiceUrl,
     hasStripeKey: !!config.stripeSecretKey,
     stripeKeyPrefix: config.stripeSecretKey ? config.stripeSecretKey.substring(0, 7) + '...' : '(missing)',
     shirtPriceCents: config.shirtPriceCents,
@@ -831,8 +841,7 @@ server.listen(config.port, config.host, () => {
     nodeEnv: process.env.NODE_ENV || 'development',
     logPath: config.logPath || '(console only)',
     logLevel: config.logLevel,
-    hasOpenAiKey: !!config.openaiApiKey,
-    openAiModel: config.openaiModel,
+    mongerServiceUrl: config.mongerServiceUrl,
     hasStripeKey: !!config.stripeSecretKey,
     shirtPriceCents: config.shirtPriceCents,
     databasePath: config.databasePath

@@ -127,15 +127,15 @@ class Logger {
     this.log(level, `← ${method} ${path} ${status} (${durationMs}ms)`, context);
   }
 
-  openaiRequest(model: string, messageCount: number, context?: Record<string, unknown>) {
-    this.info(`OpenAI Request`, { model, messageCount, ...context });
+  mongerRequest(endpoint: string, context?: Record<string, unknown>) {
+    this.info(`Monger Request: ${endpoint}`, context);
   }
 
-  openaiResponse(model: string, durationMs: number, tokensUsed?: number, context?: Record<string, unknown>) {
-    this.info(`OpenAI Response`, { model, durationMs, tokensUsed, ...context });
+  mongerResponse(endpoint: string, durationMs: number, context?: Record<string, unknown>) {
+    this.info(`Monger Response: ${endpoint}`, { durationMs, ...context });
   }
 
-  openaiError(error: Error | unknown, context?: Record<string, unknown>) {
+  mongerError(error: Error | unknown, context?: Record<string, unknown>) {
     const errorInfo = error instanceof Error 
       ? { 
           name: error.name, 
@@ -147,7 +147,7 @@ class Logger {
         }
       : { error: String(error) };
     
-    this.error(`OpenAI Error`, { ...errorInfo, ...context });
+    this.error(`Monger Service Error`, { ...errorInfo, ...context });
   }
 
   session(action: string, sessionId: string, customerId?: string, context?: Record<string, unknown>) {
