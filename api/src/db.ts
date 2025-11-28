@@ -57,6 +57,7 @@ try {
     collected_affirmation INTEGER DEFAULT 0,
     referrer_email TEXT,
     discount_code TEXT,
+    checkout_state TEXT,
     FOREIGN KEY (customer_id) REFERENCES customers(id)
   );
   
@@ -81,6 +82,14 @@ try {
   CREATE INDEX IF NOT EXISTS idx_sessions_customer ON sessions(customer_id);
   CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 `);
+
+  // Migration: add checkout_state column if it doesn't exist
+  const sessionCols = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[];
+  if (!sessionCols.find(c => c.name === 'checkout_state')) {
+    dbLog('Migrating: adding checkout_state column to sessions');
+    db.exec('ALTER TABLE sessions ADD COLUMN checkout_state TEXT');
+  }
+  
   dbLog('Schema ready');
 } catch (error) {
   dbLog('FATAL: Failed to create schema', { 
@@ -172,6 +181,10 @@ export function updateSessionState(sessionId: string, updates: Partial<SessionUp
   if (updates.discountCode !== undefined) {
     fields.push('discount_code = ?');
     values.push(updates.discountCode);
+  }
+  if (updates.checkoutState !== undefined) {
+    fields.push('checkout_state = ?');
+    values.push(updates.checkoutState);
   }
   
   fields.push('last_message_at = CURRENT_TIMESTAMP');
@@ -266,6 +279,7 @@ export interface SessionRow {
   collected_affirmation: number;
   referrer_email: string | null;
   discount_code: string | null;
+  checkout_state: string | null;
 }
 
 export interface MessageRow {
@@ -289,5 +303,6 @@ export interface SessionUpdates {
   collectedAffirmation: boolean;
   referrerEmail: string | null;
   discountCode: string | null;
+  checkoutState: string | null;
 }
 

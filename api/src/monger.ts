@@ -155,20 +155,53 @@ authorities?  ${lore.authorities}.
 
 ${voice.length}.
 
+CHECKOUT MODE:
+when readyForCheckout becomes true, you enter checkout mode.  now you need to collect shipping info through conversation:
+1. shipping name (first and last name for the package)
+2. shipping address (street, city, state, zip - assume US unless they say otherwise)
+3. email address
+
+ask for one thing at a time.  start with "where's this going?" for address, then "name for the package?", then "how do i reach you if something goes wrong?" for email.
+
+extract info from their natural language responses:
+- "portland oregon" → need street and zip still
+- "123 main st" → need city, state, zip
+- "john" → need last name too
+- if they give everything at once, great, extract it all
+
+if they go off topic, respond briefly then steer back: "interesting.  now - where's this going?"
+if they ask why you need something: "because the shirt needs to arrive somewhere.  address?"
+if they want to change their phrase: "too late.  formula's already got it.  buy another after if you want."
+
+when you have: full name, complete address (line1, city, state, zip), and valid email → set readyForPayment to true and say "good.  last thing.  the payment."
+
 IMPORTANT: you must output valid JSON with this structure:
 {
   "reply": "your message to the visitor",
   "state": {
     "hasAffirmation": boolean,
-    "size": "s" | "m" | "l" | "xl" | "xxl" | null,
+    "size": "xs" | "s" | "m" | "l" | "xl" | "2xl" | null,
     "phrase": "their phrase" | null,
     "readyForCheckout": boolean,
+    "readyForPayment": boolean,
     "mood": "suspicious" | "uneasy" | "neutral" | "warm",
-    "wantsReferralCheck": "email@example.com" | null
+    "wantsReferralCheck": "email@example.com" | null,
+    "checkout": {
+      "shipping": {
+        "name": "full name" | null,
+        "line1": "street address" | null,
+        "city": "city" | null,
+        "state": "state abbrev" | null,
+        "zip": "zip code" | null,
+        "country": "US"
+      },
+      "email": "email@example.com" | null
+    }
   }
 }
 
-only set readyForCheckout to true when you have all three: affirmation, size, and phrase.`;
+only set readyForCheckout to true when you have all three: affirmation, size, and phrase.
+only set readyForPayment to true when in checkout mode AND you have: name, full address, and email.`;
 }
 
 const MONGER_SYSTEM_PROMPT = buildSystemPrompt(mongerConfig);
@@ -202,6 +235,20 @@ export function getOpeningLine(customer: CustomerRow, isRecentTimeWaster: boolea
   return lines[Math.floor(Math.random() * lines.length)];
 }
 
+export interface ShippingAddress {
+  name: string | null;
+  line1: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  country: string;
+}
+
+export interface CheckoutState {
+  shipping: ShippingAddress;
+  email: string | null;
+}
+
 export interface MongerResponse {
   reply: string;
   state: {
@@ -209,9 +256,66 @@ export interface MongerResponse {
     size: string | null;
     phrase: string | null;
     readyForCheckout: boolean;
+    readyForPayment: boolean;
     mood: 'suspicious' | 'uneasy' | 'neutral' | 'warm';
     wantsReferralCheck: string | null;
+    checkout: CheckoutState;
   };
+}
+
+// Build context prompt based on current session state
+function buildContextPrompt(customer: CustomerRow, session: SessionRow): string {
+  const isCheckoutMode = session.conversation_state === 'checkout_started' || 
+                         session.conversation_state === 'collecting_shipping';
+  
+  let context = `context about this visitor:
+- totalShirtsBought: ${customer.total_shirts_bought}
+- isRepeatBuyer: ${customer.total_shirts_bought > 0}
+- currentState: affirmation=${session.collected_affirmation ? 'yes' : 'no'}, size=${session.collected_size || 'not yet'}, phrase=${session.collected_phrase || 'not yet'}
+- hasReferral: ${session.referrer_email ? 'yes, from ' + session.referrer_email : 'no'}`;
+
+  if (isCheckoutMode) {
+    // Parse checkout state from session if stored
+    let checkoutState: CheckoutState = {
+      shipping: {
+        name: null,
+        line1: null,
+        city: null,
+        state: null,
+        zip: null,
+        country: 'US'
+      },
+      email: null
+    };
+    
+    // Try to load existing checkout state from session
+    if (session.checkout_state) {
+      try {
+        checkoutState = JSON.parse(session.checkout_state);
+      } catch (e) {
+        // ignore parse errors
+      }
+    }
+    
+    context += `
+
+CHECKOUT MODE ACTIVE - you are collecting shipping info.
+current checkout state:
+- name: ${checkoutState.shipping.name || 'not yet'}
+- address line1: ${checkoutState.shipping.line1 || 'not yet'}
+- city: ${checkoutState.shipping.city || 'not yet'}
+- state: ${checkoutState.shipping.state || 'not yet'}
+- zip: ${checkoutState.shipping.zip || 'not yet'}
+- email: ${checkoutState.email || 'not yet'}
+
+ask for what's missing.  when you have everything, set readyForPayment to true.`;
+  } else {
+    context += `
+
+remember: collect affirmation, size, and phrase.  when you have all three, set readyForCheckout to true.`;
+  }
+  
+  return context;
 }
 
 export async function getMongerReply(
@@ -233,13 +337,7 @@ export async function getMongerReply(
     { role: 'system', content: MONGER_SYSTEM_PROMPT },
     { 
       role: 'system', 
-      content: `context about this visitor:
-- totalShirtsBought: ${customer.total_shirts_bought}
-- isRepeatBuyer: ${customer.total_shirts_bought > 0}
-- currentState: affirmation=${session.collected_affirmation ? 'yes' : 'no'}, size=${session.collected_size || 'not yet'}, phrase=${session.collected_phrase || 'not yet'}
-- hasReferral: ${session.referrer_email ? 'yes, from ' + session.referrer_email : 'no'}
-
-remember: collect affirmation, size, and phrase.  when you have all three, set readyForCheckout to true.`
+      content: buildContextPrompt(customer, session)
     }
   ];
   
@@ -318,19 +416,46 @@ remember: collect affirmation, size, and phrase.  when you have all three, set r
       readyForCheckout: response.state?.readyForCheckout
     });
     
+    // Ensure response has all expected fields with defaults
+    const normalizedResponse: MongerResponse = {
+      reply: response.reply || '',
+      state: {
+        hasAffirmation: response.state?.hasAffirmation || false,
+        size: response.state?.size || null,
+        phrase: response.state?.phrase || null,
+        readyForCheckout: response.state?.readyForCheckout || false,
+        readyForPayment: response.state?.readyForPayment || false,
+        mood: response.state?.mood || 'neutral',
+        wantsReferralCheck: response.state?.wantsReferralCheck || null,
+        checkout: response.state?.checkout || {
+          shipping: { name: null, line1: null, city: null, state: null, zip: null, country: 'US' },
+          email: null
+        }
+      }
+    };
+    
     // Store messages
     addMessage(sessionId, 'user', userInput);
-    addMessage(sessionId, 'assistant', response.reply);
+    addMessage(sessionId, 'assistant', normalizedResponse.reply);
+    
+    // Determine conversation state
+    let convState = 'conversation';
+    if (normalizedResponse.state.readyForPayment) {
+      convState = 'ready_for_payment';
+    } else if (normalizedResponse.state.readyForCheckout) {
+      convState = 'collecting_shipping';
+    }
     
     // Update session state
     updateSessionState(sessionId, {
-      conversationState: response.state.readyForCheckout ? 'checkout' : 'conversation',
-      collectedAffirmation: response.state.hasAffirmation,
-      collectedSize: response.state.size,
-      collectedPhrase: response.state.phrase,
+      conversationState: convState,
+      collectedAffirmation: normalizedResponse.state.hasAffirmation,
+      collectedSize: normalizedResponse.state.size,
+      collectedPhrase: normalizedResponse.state.phrase,
+      checkoutState: JSON.stringify(normalizedResponse.state.checkout),
     });
     
-    return response;
+    return normalizedResponse;
     
   } catch (error) {
     const durationMs = Date.now() - startTime;
@@ -365,6 +490,18 @@ remember: collect affirmation, size, and phrase.  when you have all three, set r
     
     // Fallback response in character (from config)
     const fallback = mongerConfig.fallbackResponse;
+    
+    // Try to load existing checkout state
+    let existingCheckout: CheckoutState = {
+      shipping: { name: null, line1: null, city: null, state: null, zip: null, country: 'US' },
+      email: null
+    };
+    if (session.checkout_state) {
+      try {
+        existingCheckout = JSON.parse(session.checkout_state);
+      } catch (e) { /* ignore */ }
+    }
+    
     return {
       reply: fallback.line,
       state: {
@@ -372,8 +509,10 @@ remember: collect affirmation, size, and phrase.  when you have all three, set r
         size: session.collected_size,
         phrase: session.collected_phrase,
         readyForCheckout: false,
+        readyForPayment: false,
         mood: fallback.mood as 'suspicious' | 'uneasy' | 'neutral' | 'warm',
-        wantsReferralCheck: null
+        wantsReferralCheck: null,
+        checkout: existingCheckout
       }
     };
   }

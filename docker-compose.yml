@@ -47,18 +47,14 @@ services:
       - HOST=0.0.0.0
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
-      - SHOPIFY_STORE_URL=${SHOPIFY_STORE_URL}
-      - SHOPIFY_ACCESS_TOKEN=${SHOPIFY_ACCESS_TOKEN}
-      - SHOPIFY_API_VERSION=${SHOPIFY_API_VERSION:-2024-01}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - SHIRT_PRICE_CENTS=${SHIRT_PRICE_CENTS:-3500}
+      - SITE_URL=${SITE_URL:-https://cheeseshirt.com}
       - DATABASE_PATH=/app/data/cheeseshirt.db
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       - TIME_WASTER_THRESHOLD_HOURS=${TIME_WASTER_THRESHOLD_HOURS:-24}
-      - SHOPIFY_VARIANT_XS=${SHOPIFY_VARIANT_XS}
-      - SHOPIFY_VARIANT_S=${SHOPIFY_VARIANT_S}
-      - SHOPIFY_VARIANT_M=${SHOPIFY_VARIANT_M}
-      - SHOPIFY_VARIANT_L=${SHOPIFY_VARIANT_L}
-      - SHOPIFY_VARIANT_XL=${SHOPIFY_VARIANT_XL}
-      - SHOPIFY_VARIANT_2XL=${SHOPIFY_VARIANT_2XL}
       - LOG_PATH=/app/logs/cheeseshirt-api.log
       - LOG_LEVEL=${LOG_LEVEL:-debug}
       - MONGER_CONFIG_PATH=/app/monger/monger.json
@@ -97,9 +93,39 @@ services:
     networks:
       - cheeseshirt
 
+  # worker-stripe:
+  #   build:
+  #     context: ./worker-stripe-orders
+  #     dockerfile: Dockerfile
+  #   container_name: cheeseshirt-worker-stripe
+  #   restart: unless-stopped
+  #   environment:
+  #     - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+  #     - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-300}
+  #     - ORDERS_DIR=/app/Orders
+  #     - STATE_DIR=/app/state
+  #     - HOST=0.0.0.0
+  #     - PORT=8002
+  #     - LOG_LEVEL=${LOG_LEVEL:-INFO}
+  #   volumes:
+  #     - stripe-orders:/app/Orders
+  #     - stripe-state:/app/state
+  #   ports:
+  #     - "127.0.0.1:8002:8002"
+  #   healthcheck:
+  #     test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8002/health').raise_for_status()"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 10s
+  #   networks:
+  #     - cheeseshirt
+
 networks:
   cheeseshirt:
     driver: bridge
 
 volumes:
   monger-config:
+  stripe-orders:
+  stripe-state:

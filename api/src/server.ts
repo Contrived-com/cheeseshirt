@@ -17,7 +17,13 @@ import {
   CustomerRow
 } from './db.js';
 import { getMongerReply, getOpeningLine, getReferralResponseLine, MongerResponse, testOpenAIConnection } from './monger.js';
-import { createCheckout } from './shopify.js';
+import { 
+  createPaymentIntent, 
+  updatePaymentIntentShipping,
+  verifyWebhookSignature,
+  getPublishableKey,
+  testStripeConnection
+} from './stripe.js';
 import { db } from './db.js';
 
 // Initialize logger before anything else
@@ -78,6 +84,16 @@ async function parseBody<T>(req: IncomingMessage): Promise<T> {
         reject(new Error('Invalid JSON'));
       }
     });
+    req.on('error', reject);
+  });
+}
+
+// Parse raw body from request (for webhook verification)
+async function parseRawBody(req: IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
 }
@@ -201,6 +217,20 @@ interface ChatRequest {
   userInput: string;
 }
 
+interface CheckoutShipping {
+  name: string | null;
+  line1: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  country: string;
+}
+
+interface CheckoutState {
+  shipping: CheckoutShipping;
+  email: string | null;
+}
+
 interface ChatResponse {
   mongerReply: string;
   conversationState: string;
@@ -208,10 +238,12 @@ interface ChatResponse {
   needsPhrase: boolean;
   needsAffirmation: boolean;
   readyForCheckout: boolean;
+  readyForPayment: boolean;
   wantsReferralCheck: string | null;
   mood: string;
   collectedSize: string | null;
   collectedPhrase: string | null;
+  checkout: CheckoutState;
 }
 
 async function handleChat(req: IncomingMessage, res: ServerResponse) {
@@ -246,8 +278,15 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
       needsPhrase: false,
       needsAffirmation: false,
       readyForCheckout: false,
+      readyForPayment: false,
       wantsReferralCheck: null,
-      mood: 'suspicious'
+      mood: 'suspicious',
+      collectedSize: null,
+      collectedPhrase: null,
+      checkout: {
+        shipping: { name: null, line1: null, city: null, state: null, zip: null, country: 'US' },
+        email: null
+      }
     });
   }
   
@@ -262,17 +301,27 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
       hasPhrase: !!mongerResponse.state.phrase
     });
     
+    // Determine conversation state string
+    let convStateStr = 'conversation';
+    if (mongerResponse.state.readyForPayment) {
+      convStateStr = 'ready_for_payment';
+    } else if (mongerResponse.state.readyForCheckout) {
+      convStateStr = 'collecting_shipping';
+    }
+    
     const response: ChatResponse = {
       mongerReply: mongerResponse.reply,
-      conversationState: mongerResponse.state.readyForCheckout ? 'checkout' : 'conversation',
+      conversationState: convStateStr,
       needsSize: !mongerResponse.state.size,
       needsPhrase: !mongerResponse.state.phrase,
       needsAffirmation: !mongerResponse.state.hasAffirmation,
       readyForCheckout: mongerResponse.state.readyForCheckout,
+      readyForPayment: mongerResponse.state.readyForPayment,
       wantsReferralCheck: mongerResponse.state.wantsReferralCheck,
       mood: mongerResponse.state.mood,
       collectedSize: mongerResponse.state.size,
-      collectedPhrase: mongerResponse.state.phrase
+      collectedPhrase: mongerResponse.state.phrase,
+      checkout: mongerResponse.state.checkout
     };
     
     sendJson(res, response);
@@ -348,52 +397,68 @@ async function handleReferralLookup(req: IncomingMessage, res: ServerResponse) {
   sendJson(res, response);
 }
 
-interface CreateCheckoutRequest {
+// ============================================
+// Stripe Payment Handlers
+// ============================================
+
+// Get Stripe config for frontend
+async function handleStripeConfig(req: IncomingMessage, res: ServerResponse) {
+  sendJson(res, {
+    publishableKey: getPublishableKey(),
+    shirtPriceCents: config.shirtPriceCents,
+  });
+}
+
+interface CreatePaymentIntentRequest {
   sessionId: string;
   size: string;
   phrase: string;
-  discountCode?: string;
+  email: string;
+  customerName: string;
 }
 
-interface CreateCheckoutResponse {
-  checkoutUrl: string;
-}
-
-async function handleCreateCheckout(req: IncomingMessage, res: ServerResponse) {
-  const body = await parseBody<CreateCheckoutRequest>(req);
+// Create a PaymentIntent for embedded checkout
+async function handleCreatePaymentIntent(req: IncomingMessage, res: ServerResponse) {
+  const body = await parseBody<CreatePaymentIntentRequest>(req);
   
-  if (!body.sessionId || !body.size || !body.phrase) {
-    logger.warn('Checkout: missing required fields', { 
+  if (!body.sessionId || !body.size || !body.phrase || !body.email) {
+    logger.warn('PaymentIntent: missing required fields', { 
       hasSessionId: !!body.sessionId, 
       hasSize: !!body.size, 
-      hasPhrase: !!body.phrase 
+      hasPhrase: !!body.phrase,
+      hasEmail: !!body.email
     });
     return sendError(res, 'Missing required fields');
   }
   
+  // Validate phrase length
+  if (body.phrase.length > 500) {
+    return sendError(res, 'Phrase too long (max 500 characters)');
+  }
+  
   const session = getSession(body.sessionId);
   if (!session) {
-    logger.warn('Checkout: invalid session', { sessionId: body.sessionId.substring(0, 8) + '...' });
+    logger.warn('PaymentIntent: invalid session', { sessionId: body.sessionId.substring(0, 8) + '...' });
     return sendError(res, 'Invalid session', 404);
   }
   
-  logger.info('Checkout: creating', { 
+  logger.info('PaymentIntent: creating', { 
     sessionId: body.sessionId.substring(0, 8) + '...',
     size: body.size,
     phraseLength: body.phrase.length,
-    hasDiscountCode: !!(body.discountCode || session.discount_code)
+    email: body.email.substring(0, 3) + '***'
   });
   
   try {
-    const result = await createCheckout({
+    const result = await createPaymentIntent({
+      sessionId: body.sessionId,
       size: body.size,
       phrase: body.phrase,
-      discountCode: body.discountCode || session.discount_code || undefined,
-      customerId: session.customer_id
+      email: body.email,
+      customerName: body.customerName || '',
     });
     
-    // Mark this customer as potentially having purchased
-    // (actual purchase confirmation comes from webhook)
+    // Update session state
     updateSessionState(body.sessionId, {
       conversationState: 'checkout_started',
       collectedSize: body.size,
@@ -403,24 +468,144 @@ async function handleCreateCheckout(req: IncomingMessage, res: ServerResponse) {
       discountCode: session.discount_code
     });
     
-    logger.info('Checkout: created successfully', { 
+    logger.info('PaymentIntent: created successfully', { 
       sessionId: body.sessionId.substring(0, 8) + '...',
-      checkoutUrlDomain: new URL(result.checkoutUrl).hostname
+      paymentIntentId: result.paymentIntentId,
+      amount: result.amount
     });
     
-    const response: CreateCheckoutResponse = {
-      checkoutUrl: result.checkoutUrl
-    };
-    
-    sendJson(res, response);
+    sendJson(res, {
+      clientSecret: result.clientSecret,
+      paymentIntentId: result.paymentIntentId,
+      amount: result.amount,
+      currency: result.currency,
+    });
     
   } catch (error) {
-    logger.shopifyError('create checkout', error, { 
+    logger.error('PaymentIntent: creation failed', { 
       sessionId: body.sessionId.substring(0, 8) + '...',
-      size: body.size
+      error: error instanceof Error ? error.message : String(error)
     });
-    sendError(res, 'Failed to create checkout', 500);
+    sendError(res, 'Failed to create payment', 500);
   }
+}
+
+interface UpdateShippingRequest {
+  paymentIntentId: string;
+  shipping: {
+    name: string;
+    phone?: string;
+    address: {
+      line1: string;
+      line2?: string;
+      city: string;
+      state: string;
+      postal_code: string;
+      country: string;
+    };
+  };
+}
+
+// Update PaymentIntent with shipping address
+async function handleUpdateShipping(req: IncomingMessage, res: ServerResponse) {
+  const body = await parseBody<UpdateShippingRequest>(req);
+  
+  if (!body.paymentIntentId || !body.shipping || !body.shipping.address) {
+    return sendError(res, 'Missing paymentIntentId or shipping address');
+  }
+  
+  try {
+    await updatePaymentIntentShipping(body.paymentIntentId, body.shipping);
+    sendJson(res, { success: true });
+  } catch (error) {
+    logger.error('UpdateShipping: failed', { 
+      paymentIntentId: body.paymentIntentId,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    sendError(res, 'Failed to update shipping', 500);
+  }
+}
+
+// Handle Stripe webhook events
+async function handleStripeWebhook(req: IncomingMessage, res: ServerResponse) {
+  const signature = req.headers['stripe-signature'] as string;
+  
+  if (!signature) {
+    logger.warn('Stripe webhook: missing signature');
+    return sendError(res, 'Missing stripe-signature header', 400);
+  }
+  
+  let rawBody: Buffer;
+  try {
+    rawBody = await parseRawBody(req);
+  } catch (error) {
+    logger.error('Stripe webhook: failed to read body');
+    return sendError(res, 'Failed to read request body', 400);
+  }
+  
+  let event;
+  try {
+    event = verifyWebhookSignature(rawBody, signature);
+  } catch (error) {
+    logger.error('Stripe webhook: signature verification failed', {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return sendError(res, 'Invalid signature', 400);
+  }
+  
+  logger.info('Stripe webhook: received', { type: event.type, id: event.id });
+  
+  // Handle specific event types
+  switch (event.type) {
+    case 'payment_intent.succeeded': {
+      const paymentIntent = event.data.object as any;
+      const metadata = paymentIntent.metadata || {};
+      
+      logger.info('Payment succeeded', {
+        paymentIntentId: paymentIntent.id,
+        amount: paymentIntent.amount,
+        sessionId: metadata.session_id?.substring(0, 8) + '...',
+        size: metadata.size,
+        phraseLength: metadata.phrase?.length,
+      });
+      
+      // Update session to mark purchase complete
+      if (metadata.session_id) {
+        const session = getSession(metadata.session_id);
+        if (session) {
+          updateSessionState(metadata.session_id, {
+            conversationState: 'purchase_complete',
+            collectedAffirmation: true,
+            collectedSize: metadata.size,
+            collectedPhrase: metadata.phrase,
+            referrerEmail: session.referrer_email,
+            discountCode: session.discount_code,
+          });
+          
+          // Increment customer purchase count
+          const customer = getOrCreateCustomer(session.customer_id);
+          // Note: You may want to add a function to increment purchase count
+        }
+      }
+      break;
+    }
+    
+    case 'payment_intent.payment_failed': {
+      const paymentIntent = event.data.object as any;
+      logger.warn('Payment failed', {
+        paymentIntentId: paymentIntent.id,
+        sessionId: paymentIntent.metadata?.session_id?.substring(0, 8) + '...',
+        error: paymentIntent.last_payment_error?.message,
+      });
+      break;
+    }
+    
+    default:
+      logger.debug('Stripe webhook: unhandled event type', { type: event.type });
+  }
+  
+  // Acknowledge receipt
+  sendJson(res, { received: true });
 }
 
 interface ProfileResponse {
@@ -518,12 +703,25 @@ async function handleStatus(req: IncomingMessage, res: ServerResponse) {
     };
   }
   
+  // Test Stripe
+  try {
+    const stripeResult = await testStripeConnection();
+    status.stripe = stripeResult;
+  } catch (error) {
+    status.stripe = { 
+      ok: false, 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+  
   // Config (sanitized)
   status.config = {
     hasOpenAiKey: !!config.openaiApiKey,
     openAiKeyPrefix: config.openaiApiKey ? config.openaiApiKey.substring(0, 7) + '...' : '(missing)',
     openAiModel: config.openaiModel,
-    hasShopifyToken: !!config.shopifyAccessToken,
+    hasStripeKey: !!config.stripeSecretKey,
+    stripeKeyPrefix: config.stripeSecretKey ? config.stripeSecretKey.substring(0, 7) + '...' : '(missing)',
+    shirtPriceCents: config.shirtPriceCents,
     databasePath: config.databasePath,
     logPath: config.logPath,
     logLevel: config.logLevel,
@@ -592,8 +790,16 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       await handleChat(req, res);
     } else if (path === '/api/referral-lookup' && method === 'POST') {
       await handleReferralLookup(req, res);
-    } else if (path === '/api/create-checkout' && method === 'POST') {
-      await handleCreateCheckout(req, res);
+    // Stripe endpoints
+    } else if (path === '/api/stripe/config' && method === 'GET') {
+      await handleStripeConfig(req, res);
+    } else if (path === '/api/stripe/create-payment-intent' && method === 'POST') {
+      await handleCreatePaymentIntent(req, res);
+    } else if (path === '/api/stripe/update-shipping' && method === 'POST') {
+      await handleUpdateShipping(req, res);
+    } else if (path === '/api/stripe/webhook' && method === 'POST') {
+      await handleStripeWebhook(req, res);
+    // Other endpoints
     } else if (path === '/api/profile' && method === 'GET') {
       await handleProfile(req, res);
     } else if (path === '/api/mark-time-waster' && method === 'POST') {
@@ -627,7 +833,8 @@ server.listen(config.port, config.host, () => {
     logLevel: config.logLevel,
     hasOpenAiKey: !!config.openaiApiKey,
     openAiModel: config.openaiModel,
-    hasShopifyToken: !!config.shopifyAccessToken,
+    hasStripeKey: !!config.stripeSecretKey,
+    shirtPriceCents: config.shirtPriceCents,
     databasePath: config.databasePath
   });
   
@@ -636,7 +843,10 @@ server.listen(config.port, config.host, () => {
       'POST /api/session/init',
       'POST /api/chat',
       'POST /api/referral-lookup',
-      'POST /api/create-checkout',
+      'GET  /api/stripe/config',
+      'POST /api/stripe/create-payment-intent',
+      'POST /api/stripe/update-shipping',
+      'POST /api/stripe/webhook',
       'GET  /api/profile',
       'GET  /api/health',
       'GET  /api/status (diagnostic)'

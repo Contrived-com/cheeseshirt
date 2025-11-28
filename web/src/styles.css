@@ -372,3 +372,169 @@ body {
   color: var(--text-bright);
 }
 
+/* ============================================
+   Payment Form Styles (Card Only)
+   The Monger collects address/email through chat,
+   only the card form appears as a UI element
+   ============================================ */
+
+.checkout-form {
+  margin-top: 16px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.checkout-form.hidden {
+  display: none;
+}
+
+.checkout-section {
+  margin-bottom: 20px;
+}
+
+.checkout-section:last-child {
+  margin-bottom: 0;
+}
+
+.checkout-label {
+  display: block;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: lowercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+/* Stripe Elements container */
+.stripe-element {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  border-radius: 2px;
+  transition: border-color 0.2s ease;
+}
+
+.stripe-element.StripeElement--focus {
+  border-color: var(--accent);
+}
+
+.stripe-element.StripeElement--invalid {
+  border-color: #8b4444;
+}
+
+/* Submit button */
+.checkout-submit {
+  width: 100%;
+  background: var(--accent);
+  color: var(--text-bright);
+  border: none;
+  font-family: var(--font-mono);
+  font-size: var(--font-size);
+  padding: 12px 16px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: lowercase;
+  letter-spacing: 0.5px;
+  margin-top: 16px;
+}
+
+.checkout-submit:hover:not(:disabled) {
+  background: var(--accent-dim);
+}
+
+.checkout-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.checkout-submit.processing {
+  position: relative;
+  color: transparent;
+}
+
+.checkout-submit.processing::after {
+  content: 'checking with my guy...';
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--text-bright);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Order summary */
+.checkout-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.checkout-summary-label {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.checkout-summary-value {
+  color: var(--text-bright);
+  font-size: 16px;
+}
+
+/* Error message */
+.checkout-error {
+  color: #8b4444;
+  font-size: 12px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: rgba(139, 68, 68, 0.1);
+  border: 1px solid rgba(139, 68, 68, 0.3);
+  border-radius: 2px;
+}
+
+.checkout-error.hidden {
+  display: none;
+}
+
+/* Success state */
+.checkout-success {
+  text-align: center;
+  padding: 20px;
+  color: var(--accent);
+}
+
+.checkout-success.hidden {
+  display: none;
+}
+
+/* Cancel link */
+.checkout-cancel {
+  display: block;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-top: 12px;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.checkout-cancel:hover {
+  color: var(--text-primary);
+}
+
+/* Mobile adjustments for checkout */
+@media (max-width: 600px) {
+  .checkout-form {
+    padding: 12px;
+  }
+}
+

@@ -1,22 +1,38 @@
 import { config as dotenvConfig } from 'dotenv';
 import { resolve } from 'path';
+import { existsSync } from 'fs';
 
-dotenvConfig({ path: resolve(process.cwd(), '.env') });
+// Look for .env in current dir first, then project root (for local dev)
+const localEnv = resolve(process.cwd(), '.env');
+const rootEnv = resolve(process.cwd(), '../.env');
+
+if (existsSync(localEnv)) {
+  dotenvConfig({ path: localEnv });
+} else if (existsSync(rootEnv)) {
+  dotenvConfig({ path: rootEnv });
+} else {
+  dotenvConfig(); // fall back to default behavior
+}
 
 export const config = {
   // OpenAI
   openaiApiKey: process.env.OPENAI_API_KEY || '',
   openaiModel: process.env.OPENAI_MODEL || 'gpt-4o',
   
-  // Shopify
-  shopifyStoreUrl: process.env.SHOPIFY_STORE_URL || '',
-  shopifyAccessToken: process.env.SHOPIFY_ACCESS_TOKEN || '',
-  shopifyApiVersion: process.env.SHOPIFY_API_VERSION || '2024-01',
-  shopifyProductId: process.env.SHOPIFY_PRODUCT_ID || '',
+  // Stripe
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY || '',
+  stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
+  
+  // Product pricing (in cents)
+  shirtPriceCents: parseInt(process.env.SHIRT_PRICE_CENTS || '3500', 10),  // $35.00
   
   // Server
   port: parseInt(process.env.PORT || '3001', 10),
   host: process.env.HOST || '0.0.0.0',
+  
+  // Site URL (for receipts, etc)
+  siteUrl: process.env.SITE_URL || 'https://cheeseshirt.com',
   
   // Database
   databasePath: process.env.DATABASE_PATH || './data/cheeseshirt.db',
@@ -34,7 +50,7 @@ export const config = {
 } as const;
 
 export function validateConfig(): void {
-  const required = ['openaiApiKey'];
+  const required = ['openaiApiKey', 'stripeSecretKey'];
   const missing = required.filter(key => !config[key as keyof typeof config]);
   
   if (missing.length > 0) {

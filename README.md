@@ -6,10 +6,11 @@ the monger's underground operation.
 
 ```
 cheeseshirt/
-├── api/                    # backend - node.js api server
-├── web/                    # frontend - terminal interface
-├── worker-shopify-orders/  # background worker - order processing
-├── docker-compose.yml      # container orchestration
+├── api/                     # backend - node.js api server
+├── web/                     # frontend - terminal interface
+├── worker-stripe-orders/    # background worker - stripe order sync
+├── monger/                  # monger character config
+├── docker-compose.yml       # container orchestration
 └── .gitignore
 ```
 
@@ -18,16 +19,17 @@ cheeseshirt/
 1. set environment variables:
 ```bash
 export OPENAI_API_KEY=your-openai-key
-export SHOPIFY_STORE_URL=your-store.myshopify.com
-export SHOPIFY_ACCESS_TOKEN=your-shopify-token
+export STRIPE_SECRET_KEY=sk_live_xxx
+export STRIPE_PUBLISHABLE_KEY=pk_live_xxx
+export STRIPE_WEBHOOK_SECRET=whsec_xxx
 ```
 
 2. run:
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-3. visit http://localhost
+3. visit http://localhost:8080
 
 ## quick start (development)
 
@@ -60,15 +62,7 @@ tags created:
 
 ## deployment
 
-### option 1: pull from ghcr (recommended)
-
-```bash
-# on your server
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
-```
-
-### option 2: build locally
+### option 1: build locally
 
 ```bash
 docker compose up -d --build
@@ -82,6 +76,9 @@ docker build -t cheeseshirt-api ./api
 
 # web
 docker build -t cheeseshirt-web ./web
+
+# worker
+docker build -t cheeseshirt-worker-stripe ./worker-stripe-orders
 ```
 
 ### environment variables
@@ -90,11 +87,13 @@ docker build -t cheeseshirt-web ./web
 |----------|----------|-------------|
 | `OPENAI_API_KEY` | yes | openai api key for monger responses |
 | `OPENAI_MODEL` | no | model to use (default: gpt-4o) |
-| `SHOPIFY_STORE_URL` | yes | your-store.myshopify.com |
-| `SHOPIFY_ACCESS_TOKEN` | yes | shopify admin api token |
-| `SHOPIFY_API_VERSION` | no | api version (default: 2024-01) |
+| `STRIPE_SECRET_KEY` | yes | stripe secret key (sk_live_xxx or sk_test_xxx) |
+| `STRIPE_PUBLISHABLE_KEY` | yes | stripe publishable key (pk_live_xxx or pk_test_xxx) |
+| `STRIPE_WEBHOOK_SECRET` | no | stripe webhook signing secret (whsec_xxx) |
+| `SHIRT_PRICE_CENTS` | no | price in cents (default: 3500 = $35.00) |
 | `COOKIE_SECURE` | no | set true for https (default: false) |
 | `TIME_WASTER_THRESHOLD_HOURS` | no | hours before time-waster flag clears (default: 24) |
+| `POLL_INTERVAL_SECONDS` | no | how often worker syncs orders (default: 300) |
 
 ### production with nginx (non-docker)
 
@@ -109,11 +108,37 @@ see `web/README.md` for nginx config example.
 
 ## architecture
 
-- **stateless containers** - no persistent storage in containers
-- **ephemeral sessions** - stored in sqlite (in-container, lost on restart)
-- **state of truth** - shopify + worker-shopify-orders handles order state
-- **api** talks to openai for monger responses, shopify for checkout
-- **web** serves static files, proxies api calls
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                              CHEESESHIRT                                    │
+│                                                                             │
+│  ┌──────────────┐         ┌──────────────┐         ┌──────────────┐       │
+│  │     WEB      │         │     API      │         │    STRIPE    │       │
+│  │   Terminal   │◀───────▶│   Server     │◀───────▶│              │       │
+│  │              │         │              │         │  Holds:      │       │
+│  │ - Chat UI    │         │ - Chat/Monger│         │  - Payment   │       │
+│  │ - Stripe     │         │ - Payment    │         │  - Shipping  │       │
+│  │   Elements   │         │   Intent     │         │  - Metadata  │       │
+│  │ - Address    │         │ - Webhook    │         │    (phrase,  │       │
+│  │   Form       │         │              │         │     size)    │       │
+│  └──────────────┘         └──────────────┘         └──────────────┘       │
+│                                                            │               │
+│                                                            │               │
+│                           ┌──────────────┐                 │               │
+│                           │   WORKER     │◀────────────────┘               │
+│                           │              │    polls every 5 min            │
+│                           │ - Sync       │                                 │
+│                           │   orders     │                                 │
+│                           │ - Persist    │                                 │
+│                           │   locally    │                                 │
+│                           └──────────────┘                                 │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **stateless web** - stripe holds order data, worker syncs it
+- **embedded checkout** - payment happens in the terminal, no redirect
+- **stripe as database** - orders, addresses, metadata all stored in stripe
+- **worker syncs orders** - polls stripe, persists to local filesystem
 
 ## the monger
 
