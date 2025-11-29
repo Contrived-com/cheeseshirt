@@ -9,6 +9,7 @@ from openai import AsyncOpenAI
 
 from .base import LLMProvider, LLMMessage, LLMResponse
 from ..config import get_settings
+from ..stats import get_llm_stats
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +64,17 @@ class OpenAIProvider(LLMProvider):
             self._model, len(messages), json_mode
         )
         
+        stats = get_llm_stats()
+        
         try:
             completion = await self._client.chat.completions.create(**params)
             
             latency_ms = int((time.time() - start_time) * 1000)
             content = completion.choices[0].message.content or ""
             tokens_used = completion.usage.total_tokens if completion.usage else None
+            
+            # Record success
+            stats.record_success(latency_ms, tokens_used)
             
             logger.debug(
                 "OpenAI response: latency=%dms, tokens=%s, content_len=%d",
@@ -84,7 +90,12 @@ class OpenAIProvider(LLMProvider):
             
         except Exception as e:
             latency_ms = int((time.time() - start_time) * 1000)
-            logger.error("OpenAI error after %dms: %s", latency_ms, str(e))
+            error_msg = str(e)
+            
+            # Record failure
+            stats.record_failure(latency_ms, error_msg)
+            
+            logger.error("OpenAI error after %dms: %s", latency_ms, error_msg)
             raise
     
     async def test_connection(self) -> tuple[bool, Optional[str], Optional[int]]:

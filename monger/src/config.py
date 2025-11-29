@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o"
     openai_temperature: float = 0.7
-    openai_max_tokens: int = 500
+    openai_max_tokens: int = 4000
     
     # Character config path
     character_config_path: str = "/app/config/monger.json"

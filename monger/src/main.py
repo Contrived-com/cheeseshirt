@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
+from .stats import get_llm_stats
 from .models import (
     ChatRequest,
     ChatResponse,
@@ -176,6 +177,13 @@ async def version():
     )
 
 
+@app.get("/stats")
+async def llm_stats():
+    """Return LLM call statistics."""
+    stats = get_llm_stats()
+    return stats.get_summary()
+
+
 # =============================================================================
 # Diagnostic Endpoints
 # =============================================================================
@@ -231,8 +239,11 @@ async def get_service_logs(service: str, lines: int = 50) -> LogsResponse:
 @app.get("/diagnostic/services")
 async def get_all_services_status() -> dict:
     """Get health and version status of all services."""
+    stats = get_llm_stats()
+    llm_stats_summary = stats.get_summary()
+    
     results = {
-        "monger": {"health": None, "version": None},
+        "monger": {"health": None, "version": None, "llm_stats": llm_stats_summary},
         "api": {"health": None, "version": None},
         "web": {"health": None, "version": None},
     }
@@ -414,7 +425,8 @@ async def chat(request: ChatRequest):
             data = json.loads(response.content)
         except json.JSONDecodeError as e:
             logger.error("Failed to parse LLM response as JSON: %s", e)
-            logger.debug("Raw response: %s", response.content[:500])
+            logger.error("Raw response (first 1000 chars): %s", response.content[:1000])
+            logger.error("Raw response (last 500 chars): %s", response.content[-500:] if len(response.content) > 500 else response.content)
             raise HTTPException(status_code=500, detail="Invalid response from LLM")
         
         # Extract and normalize the response
