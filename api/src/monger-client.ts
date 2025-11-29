@@ -54,6 +54,7 @@ export interface MongerState {
   has_affirmation: boolean;
   size: string | null;
   phrase: string | null;
+  pending_confirmation: boolean;
   ready_for_checkout: boolean;
   ready_for_payment: boolean;
   mood: 'suspicious' | 'uneasy' | 'neutral' | 'warm';

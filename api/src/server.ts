@@ -257,6 +257,7 @@ interface ChatResponse {
   needsSize: boolean;
   needsPhrase: boolean;
   needsAffirmation: boolean;
+  pendingConfirmation: boolean;
   readyForCheckout: boolean;
   readyForPayment: boolean;
   wantsReferralCheck: string | null;
@@ -444,6 +445,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
       needsSize: !mongerResponse.state.size,
       needsPhrase: !mongerResponse.state.phrase,
       needsAffirmation: !mongerResponse.state.hasAffirmation,
+      pendingConfirmation: mongerResponse.state.pendingConfirmation,
       readyForCheckout: mongerResponse.state.readyForCheckout,
       readyForPayment: mongerResponse.state.readyForPayment,
       wantsReferralCheck: mongerResponse.state.wantsReferralCheck,

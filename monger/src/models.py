@@ -57,6 +57,7 @@ class MongerState(BaseModel):
     has_affirmation: bool = False
     size: Optional[str] = None
     phrase: Optional[str] = None
+    pending_confirmation: bool = False
     ready_for_checkout: bool = False
     ready_for_payment: bool = False
     mood: Literal["suspicious", "uneasy", "neutral", "warm"] = "neutral"

@@ -268,6 +268,7 @@ async function sendMessage(userInput: string): Promise<void> {
       needsSize: boolean;
       needsPhrase: boolean;
       needsAffirmation: boolean;
+      pendingConfirmation: boolean;
       readyForCheckout: boolean;
       readyForPayment: boolean;
       wantsReferralCheck: string | null;
@@ -311,8 +312,8 @@ async function sendMessage(userInput: string): Promise<void> {
       state.diagnosticMode = response.diagnosticMode;
     }
     
-    // Display Monger's reply (skip typewriter in diagnostic mode)
-    const useTypewriter = !state.diagnosticMode;
+    // Display Monger's reply (skip typewriter in diagnostic mode or confirmation)
+    const useTypewriter = !state.diagnosticMode && !response.pendingConfirmation;
     await addMessage(response.mongerReply, 'monger', useTypewriter);
     
     // Handle referral lookup if needed

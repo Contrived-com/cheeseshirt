@@ -36,6 +36,7 @@ export interface MongerResponse {
     hasAffirmation: boolean;
     size: string | null;
     phrase: string | null;
+    pendingConfirmation: boolean;
     readyForCheckout: boolean;
     readyForPayment: boolean;
     mood: 'suspicious' | 'uneasy' | 'neutral' | 'warm';
@@ -192,6 +193,7 @@ export async function getMongerReply(
         hasAffirmation: response.state.has_affirmation,
         size: response.state.size,
         phrase: response.state.phrase,
+        pendingConfirmation: response.state.pending_confirmation,
         readyForCheckout: response.state.ready_for_checkout,
         readyForPayment: response.state.ready_for_payment,
         mood: response.state.mood,
@@ -239,6 +241,7 @@ export async function getMongerReply(
         hasAffirmation: session.collected_affirmation === 1,
         size: session.collected_size,
         phrase: session.collected_phrase,
+        pendingConfirmation: false,
         readyForCheckout: false,
         readyForPayment: false,
         mood: 'neutral',

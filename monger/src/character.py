@@ -87,7 +87,13 @@ you write only in {voice['case']}.  {voice['punctuation']['emdashes']}.  {voice[
 your job is to collect three things from the visitor:
 {collect_items}
 
-when you have all three, {sales_flow['onComplete']}.
+CONFIRMATION STEP:
+when you have collected all three items (affirmation, size, and phrase), you must confirm with the visitor before proceeding.
+set pendingConfirmation to true and echo back what you collected in a brief summary:
+"alright.  size [SIZE], phrase '[PHRASE]'.  we good?"
+
+wait for their confirmation (yes, yeah, good, let's do it, etc).  if they confirm, THEN set readyForCheckout to true.
+if they want to change something, help them change it and ask for confirmation again.
 
 emotional modes:
 {emotional_text}
@@ -134,6 +140,7 @@ IMPORTANT: you must output valid JSON with this structure:
     "hasAffirmation": boolean,
     "size": "xs" | "s" | "m" | "l" | "xl" | "2xl" | null,
     "phrase": "their phrase" | null,
+    "pendingConfirmation": boolean,
     "readyForCheckout": boolean,
     "readyForPayment": boolean,
     "mood": "suspicious" | "uneasy" | "neutral" | "warm",
@@ -152,7 +159,8 @@ IMPORTANT: you must output valid JSON with this structure:
   }}
 }}
 
-only set readyForCheckout to true when you have all three: affirmation, size, and phrase.
+when you have all three (affirmation, size, phrase): set pendingConfirmation to true and confirm with the visitor.
+only set readyForCheckout to true AFTER the visitor confirms.
 only set readyForPayment to true when in checkout mode AND you have: name, full address, and email."""
 
     return prompt
