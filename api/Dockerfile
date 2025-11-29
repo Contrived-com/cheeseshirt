@@ -36,10 +36,14 @@ RUN npm ci --omit=dev && npm cache clean --force
 # Copy built files
 COPY --from=builder /app/dist ./dist
 
-# Create data and logs directories (use node user which is UID 1000 in node:alpine)
-RUN mkdir -p /app/data /app/logs && chown -R node:node /app/data /app/logs
+# Create non-root user (UID 1002 to match host cheeseshirt user)
+RUN addgroup -g 1002 cheeseshirt && \
+    adduser -u 1002 -G cheeseshirt -s /bin/sh -D cheeseshirt
 
-USER node
+# Create data and logs directories
+RUN mkdir -p /app/data /app/logs && chown -R cheeseshirt:cheeseshirt /app/data /app/logs
+
+USER cheeseshirt
 
 # Environment defaults (override at runtime)
 ENV NODE_ENV=production \

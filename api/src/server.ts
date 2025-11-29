@@ -251,6 +251,13 @@ interface CheckoutState {
   email: string | null;
 }
 
+interface UIHints {
+  skipTypewriter: boolean;
+  showPaymentForm: boolean;
+  blocked: boolean;
+  inputDisabled: boolean;
+}
+
 interface ChatResponse {
   mongerReply: string;
   conversationState: string;
@@ -265,6 +272,7 @@ interface ChatResponse {
   collectedSize: string | null;
   collectedPhrase: string | null;
   checkout: CheckoutState;
+  uiHints: UIHints;
 }
 
 async function handleChat(req: IncomingMessage, res: ServerResponse) {
@@ -321,6 +329,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
         shipping: { name: null, line1: null, city: null, state: null, zip: null, country: 'US' },
         email: null
       },
+      uiHints: { skipTypewriter: true, showPaymentForm: false, blocked: false, inputDisabled: false },
       diagnosticMode: true,
     });
   }
@@ -359,6 +368,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
         shipping: { name: null, line1: null, city: null, state: null, zip: null, country: 'US' },
         email: null
       },
+      uiHints: { skipTypewriter: false, showPaymentForm: false, blocked: false, inputDisabled: false },
       diagnosticMode: false,
     });
   }
@@ -384,6 +394,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
           shipping: { name: null, line1: null, city: null, state: null, zip: null, country: 'US' },
           email: null
         },
+        uiHints: { skipTypewriter: true, showPaymentForm: false, blocked: false, inputDisabled: false },
         diagnosticMode: true,
         diagnosticData: diagnosticResponse.diagnosticData,
       });
@@ -415,7 +426,8 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
       checkout: {
         shipping: { name: null, line1: null, city: null, state: null, zip: null, country: 'US' },
         email: null
-      }
+      },
+      uiHints: { skipTypewriter: false, showPaymentForm: false, blocked: true, inputDisabled: true }
     });
   }
   
@@ -452,7 +464,8 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
       mood: mongerResponse.state.mood,
       collectedSize: mongerResponse.state.size,
       collectedPhrase: mongerResponse.state.phrase,
-      checkout: mongerResponse.state.checkout
+      checkout: mongerResponse.state.checkout,
+      uiHints: mongerResponse.uiHints,
     };
     
     sendJson(res, response);

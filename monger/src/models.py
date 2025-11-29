@@ -65,10 +65,24 @@ class MongerState(BaseModel):
     checkout: CheckoutState = Field(default_factory=CheckoutState)
 
 
+class UIHints(BaseModel):
+    """
+    UI behavior hints from the Monger.
+    
+    This allows the Monger to control presentation without the frontend
+    needing to understand the underlying state. Keeps UI logic in Monger.
+    """
+    skip_typewriter: bool = False  # Display reply instantly (e.g., confirmations)
+    show_payment_form: bool = False  # Time to collect payment
+    blocked: bool = False  # User is blocked/banned
+    input_disabled: bool = False  # Disable user input temporarily
+
+
 class ChatResponse(BaseModel):
     """Response from the /chat endpoint."""
     reply: str
     state: MongerState
+    ui_hints: UIHints = Field(default_factory=UIHints)
 
 
 class OpeningLineRequest(BaseModel):

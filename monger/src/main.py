@@ -26,6 +26,7 @@ from .models import (
     MongerState,
     CheckoutState,
     ShippingAddress,
+    UIHints,
     OpeningLineRequest,
     OpeningLineResponse,
     ReferralLineRequest,
@@ -468,7 +469,15 @@ async def chat(request: ChatRequest):
             monger_state.ready_for_payment,
         )
         
-        return ChatResponse(reply=reply, state=monger_state)
+        # Build UI hints based on state
+        ui_hints = UIHints(
+            skip_typewriter=monger_state.pending_confirmation,
+            show_payment_form=monger_state.ready_for_payment,
+            blocked=False,
+            input_disabled=False,
+        )
+        
+        return ChatResponse(reply=reply, state=monger_state, ui_hints=ui_hints)
         
     except HTTPException:
         raise
@@ -495,6 +504,7 @@ async def chat(request: ChatRequest):
                 wants_referral_check=None,
                 checkout=checkout,
             ),
+            ui_hints=UIHints(),  # Default hints for fallback
         )
 
 

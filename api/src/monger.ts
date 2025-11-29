@@ -30,6 +30,13 @@ export interface CheckoutState {
   email: string | null;
 }
 
+export interface UIHints {
+  skipTypewriter: boolean;
+  showPaymentForm: boolean;
+  blocked: boolean;
+  inputDisabled: boolean;
+}
+
 export interface MongerResponse {
   reply: string;
   state: {
@@ -43,6 +50,7 @@ export interface MongerResponse {
     wantsReferralCheck: string | null;
     checkout: CheckoutState;
   };
+  uiHints: UIHints;
 }
 
 /**
@@ -200,6 +208,12 @@ export async function getMongerReply(
         wantsReferralCheck: response.state.wants_referral_check,
         checkout: response.state.checkout,
       },
+      uiHints: {
+        skipTypewriter: response.ui_hints.skip_typewriter,
+        showPaymentForm: response.ui_hints.show_payment_form,
+        blocked: response.ui_hints.blocked,
+        inputDisabled: response.ui_hints.input_disabled,
+      },
     };
     
     // Store messages
@@ -247,6 +261,12 @@ export async function getMongerReply(
         mood: 'neutral',
         wantsReferralCheck: null,
         checkout: checkoutState,
+      },
+      uiHints: {
+        skipTypewriter: false,
+        showPaymentForm: false,
+        blocked: false,
+        inputDisabled: false,
       },
     };
   }

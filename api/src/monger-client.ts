@@ -62,9 +62,17 @@ export interface MongerState {
   checkout: CheckoutState;
 }
 
+export interface UIHints {
+  skip_typewriter: boolean;
+  show_payment_form: boolean;
+  blocked: boolean;
+  input_disabled: boolean;
+}
+
 export interface ChatResponse {
   reply: string;
   state: MongerState;
+  ui_hints: UIHints;
 }
 
 export interface OpeningLineRequest {

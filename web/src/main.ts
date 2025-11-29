@@ -262,6 +262,13 @@ async function sendMessage(userInput: string): Promise<void> {
   const thinkingStart = Date.now();
   
   try {
+    interface UIHints {
+      skipTypewriter: boolean;
+      showPaymentForm: boolean;
+      blocked: boolean;
+      inputDisabled: boolean;
+    }
+    
     interface ChatResponse {
       mongerReply: string;
       conversationState: string;
@@ -277,6 +284,7 @@ async function sendMessage(userInput: string): Promise<void> {
       collectedPhrase: string | null;
       checkout: CheckoutState;
       diagnosticMode?: boolean;
+      uiHints: UIHints;
     }
     
     const response = await apiPost<ChatResponse>('/chat', {
@@ -292,8 +300,11 @@ async function sendMessage(userInput: string): Promise<void> {
     
     hideThinking();
     
+    // Use uiHints from Monger to control behavior
+    const hints = response.uiHints;
+    
     // Check if blocked
-    if (response.conversationState === 'blocked') {
+    if (hints.blocked) {
       state.isBlocked = true;
       terminal.classList.add('blocked');
       await addMessage(response.mongerReply, 'monger', false);
@@ -312,8 +323,8 @@ async function sendMessage(userInput: string): Promise<void> {
       state.diagnosticMode = response.diagnosticMode;
     }
     
-    // Display Monger's reply (skip typewriter in diagnostic mode or confirmation)
-    const useTypewriter = !state.diagnosticMode && !response.pendingConfirmation;
+    // Display Monger's reply (use skipTypewriter hint from Monger)
+    const useTypewriter = !hints.skipTypewriter;
     await addMessage(response.mongerReply, 'monger', useTypewriter);
     
     // Handle referral lookup if needed
@@ -321,8 +332,8 @@ async function sendMessage(userInput: string): Promise<void> {
       await handleReferralLookup(response.wantsReferralCheck);
     }
     
-    // If ready for payment, show the card form
-    if (response.readyForPayment && !state.paymentFormVisible) {
+    // Show payment form if Monger says so
+    if (hints.showPaymentForm && !state.paymentFormVisible) {
       await showPaymentForm();
     }
     
