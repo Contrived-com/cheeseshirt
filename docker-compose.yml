@@ -1,18 +1,84 @@
 # cheeseshirt docker-compose
 #
-# Usage:
-#   Local development (build from source):
-#     docker compose up -d --build
+# CI/CD: GitHub Actions builds and pushes images to GHCR on merge to main.
+#        See .github/workflows/build-and-push.yml
 #
-#   Production (pull from GHCR):
-#     docker compose pull
-#     docker compose up -d
+# Production deployment:
+#   docker compose pull
+#   docker compose up -d
 #
-# The 'image' directive is used for pulling, 'build' for local builds.
-# When both are present, 'docker compose up' uses the image,
-# 'docker compose up --build' builds locally.
+# Local development (build from source):
+#   docker compose up -d --build
+#
+# Note: The 'build' directives exist for local dev convenience only.
+# Production should always pull pre-built images from GHCR - never build on the server.
+#
+# LLM Configuration:
+#   The Monger talks to an LLM sidecar service. Enable ONE of:
+#   - llm-openai: Uses OpenAI API (requires OPENAI_API_KEY)
+#   - llm-ollama: Uses local Ollama with Phi-3.5 or other models
+#
+#   To switch LLMs, comment/uncomment the appropriate service below.
+#   The Monger doesn't know or care which LLM is being used.
 
 services:
+  # ==========================================================================
+  # LLM Sidecar - Enable ONE of these
+  # ==========================================================================
+
+  # Option 1: OpenAI (cloud API)
+  llm:
+    image: ghcr.io/contrived-com/cheeseshirt-llm-openai:latest
+    build:
+      context: ./llm-openai
+      dockerfile: Dockerfile
+    container_name: cheeseshirt-llm
+    restart: unless-stopped
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - MODEL_NAME=${LLM_MODEL:-gpt-4o}
+      - DEFAULT_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
+      - DEFAULT_MAX_TOKENS=${LLM_MAX_TOKENS:-1024}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:11435/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    networks:
+      - cheeseshirt
+
+  # Option 2: Ollama (local models - Phi-3.5, Llama, etc.)
+  # Uncomment this and comment out the llm-openai service above to use local models
+  # llm:
+  #   image: ghcr.io/contrived-com/cheeseshirt-llm-ollama:latest
+  #   build:
+  #     context: ./llm-ollama
+  #     dockerfile: Dockerfile
+  #   container_name: cheeseshirt-llm
+  #   restart: unless-stopped
+  #   environment:
+  #     - MODEL_NAME=${LLM_MODEL:-phi3.5}
+  #     - DEFAULT_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
+  #     - DEFAULT_MAX_TOKENS=${LLM_MAX_TOKENS:-1024}
+  #     - LOG_LEVEL=${LOG_LEVEL:-info}
+  #   volumes:
+  #     # Persist downloaded models
+  #     - ollama-models:/root/.ollama
+  #   healthcheck:
+  #     test: ["CMD", "python3", "-c", "import httpx; r = httpx.get('http://localhost:11435/health'); r.raise_for_status()"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 120s  # Model download can take a while
+  #   networks:
+  #     - cheeseshirt
+
+  # ==========================================================================
+  # Core Services
+  # ==========================================================================
+
   monger:
     image: ghcr.io/contrived-com/cheeseshirt-monger:latest
     build:
@@ -20,17 +86,18 @@ services:
       dockerfile: Dockerfile
     container_name: cheeseshirt-monger
     restart: unless-stopped
+    depends_on:
+      llm:
+        condition: service_healthy
     environment:
       - HOST=0.0.0.0
       - PORT=3002
-      - LOG_LEVEL=${LOG_LEVEL}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_PATH=/app/logs/cheeseshirt-monger.log
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
-      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.7}
-      - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS:-500}
       - CHARACTER_CONFIG_PATH=/app/config/monger.json
+      # LLM sidecar connection
+      - LLM_SERVICE_URL=http://llm:11435
+      - LLM_SERVICE_TIMEOUT=120.0
     volumes:
       - ${LOG_PATH:-./logs}:/app/logs
     healthcheck:
@@ -104,41 +171,10 @@ services:
     networks:
       - cheeseshirt
 
-  # worker-stripe:
-  #   build:
-  #     context: ./worker-stripe-orders
-  #     dockerfile: Dockerfile
-  #   container_name: cheeseshirt-worker-stripe
-  #   restart: unless-stopped
-  #   environment:
-  #     - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
-  #     - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-300}
-  #     - ORDERS_DIR=/app/Orders
-  #     - STATE_DIR=/app/state
-  #     - HOST=0.0.0.0
-  #     - PORT=8002
-  #     - LOG_LEVEL=${LOG_LEVEL:-INFO}
-  #     - LOG_PATH=/app/logs/worker-stripe-orders.log
-  #   volumes:
-  #     - ${LOG_PATH:-./logs}:/app/logs
-  #     - stripe-orders:/app/Orders
-  #     - stripe-state:/app/state
-  #   ports:
-  #     - "127.0.0.1:8002:8002"
-  #   healthcheck:
-  #     test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8002/health').raise_for_status()"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 3
-  #     start_period: 10s
-  #   networks:
-  #     - cheeseshirt
-
 networks:
   cheeseshirt:
     driver: bridge
 
 volumes:
   api-data:
-  stripe-orders:
-  stripe-state:
+  ollama-models:

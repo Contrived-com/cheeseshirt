@@ -2,8 +2,8 @@
 Monger Service - FastAPI application.
 
 This service handles all LLM interactions for the Monger character.
-It abstracts the underlying LLM provider, making it easy to swap between
-OpenAI, local models, or other providers.
+It talks to an LLM sidecar service (llm-openai, llm-ollama, etc.) via HTTP,
+so the Monger doesn't need to know which LLM is actually being used.
 
 Includes diagnostic mode for system introspection.
 """
@@ -45,7 +45,7 @@ from .character import (
     get_fallback_response,
     get_character_config,
 )
-from .llm import get_llm_provider, LLMMessage
+from .llm import get_llm_client, LLMMessage
 
 
 def setup_logging():
@@ -106,9 +106,9 @@ async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown."""
     # Startup
     logger.info("Monger service starting up")
-    logger.info("LLM provider: %s", settings.llm_provider)
+    logger.info("LLM sidecar URL: %s", settings.llm_service_url)
     
-    # Pre-load character config and LLM provider
+    # Pre-load character config
     try:
         get_character_config()
         logger.info("Character config loaded successfully")
@@ -116,12 +116,16 @@ async def lifespan(app: FastAPI):
         logger.error("Failed to load character config: %s", e)
         raise
     
+    # Test LLM sidecar connection
     try:
-        provider = get_llm_provider()
-        logger.info("LLM provider initialized: %s (%s)", provider.provider_name, provider.model_name)
+        llm = get_llm_client()
+        ok, error, latency_ms = await llm.health_check()
+        if ok:
+            logger.info("LLM sidecar connected: %s (%dms)", llm.model_name, latency_ms)
+        else:
+            logger.warning("LLM sidecar not ready: %s", error)
     except Exception as e:
-        logger.error("Failed to initialize LLM provider: %s", e)
-        raise
+        logger.warning("Could not connect to LLM sidecar: %s (will retry on requests)", e)
     
     yield
     
@@ -153,14 +157,14 @@ app.add_middleware(
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint. Tests the LLM connection and returns status."""
-    provider = get_llm_provider()
-    ok, error, latency_ms = await provider.test_connection()
+    llm = get_llm_client()
+    ok, error, latency_ms = await llm.health_check()
     
     return HealthResponse(
         status="ok" if ok else "degraded",
-        llm_provider=provider.provider_name,
+        llm_provider="sidecar",
         llm_ok=ok,
-        llm_model=provider.model_name if ok else None,
+        llm_model=llm.model_name if ok else None,
         llm_latency_ms=latency_ms,
         error=error,
     )
@@ -169,12 +173,12 @@ async def health_check():
 @app.get("/version", response_model=VersionResponse)
 async def version():
     """Return version information for this service."""
-    provider = get_llm_provider()
+    llm = get_llm_client()
     return VersionResponse(
         service="cheeseshirt-monger",
         version=settings.version,
-        llm_provider=provider.provider_name,
-        llm_model=provider.model_name,
+        llm_provider="sidecar",
+        llm_model=llm.model_name,
     )
 
 
@@ -252,8 +256,8 @@ async def get_all_services_status() -> dict:
     async with httpx.AsyncClient(timeout=5.0) as client:
         # Monger (self)
         try:
-            provider = get_llm_provider()
-            ok, error, latency_ms = await provider.test_connection()
+            llm = get_llm_client()
+            ok, error, latency_ms = await llm.health_check()
             results["monger"]["health"] = {
                 "status": "ok" if ok else "degraded",
                 "llm_ok": ok,
@@ -262,8 +266,8 @@ async def get_all_services_status() -> dict:
             }
             results["monger"]["version"] = {
                 "version": settings.version,
-                "llm_provider": provider.provider_name,
-                "llm_model": provider.model_name,
+                "llm_provider": "sidecar",
+                "llm_model": llm.model_name,
             }
         except Exception as e:
             results["monger"]["health"] = {"status": "error", "error": str(e)}
@@ -332,7 +336,7 @@ If the user asks to see logs, respond with a JSON block like this to trigger log
 
 Be helpful, technical, and concise. You're talking to a developer."""
 
-    provider = get_llm_provider()
+    llm = get_llm_client()
     
     # Build messages
     messages = [
@@ -347,7 +351,7 @@ Be helpful, technical, and concise. You're talking to a developer."""
     messages.append(LLMMessage(role="user", content=request.user_input))
     
     try:
-        response = await provider.chat_completion(messages, json_mode=False)
+        response = await llm.chat(messages, json_mode=False)
         
         # Check if the response contains a log fetch request
         diagnostic_data = None
@@ -385,7 +389,7 @@ Be helpful, technical, and concise. You're talking to a developer."""
 
 
 # =============================================================================
-# Character Chat Endpoints (existing)
+# Character Chat Endpoints
 # =============================================================================
 
 @app.post("/chat", response_model=ChatResponse)
@@ -394,7 +398,7 @@ async def chat(request: ChatRequest):
     Get a response from the Monger.
     
     This endpoint handles the conversation with the Monger character,
-    using the configured LLM provider.
+    sending requests to the LLM sidecar service.
     """
     logger.debug(
         "Chat request: input_len=%d, history_len=%d, checkout_mode=%s",
@@ -403,7 +407,7 @@ async def chat(request: ChatRequest):
         request.context.is_checkout_mode,
     )
     
-    provider = get_llm_provider()
+    llm = get_llm_client()
     
     # Build messages for the LLM
     messages = [
@@ -419,7 +423,7 @@ async def chat(request: ChatRequest):
     messages.append(LLMMessage(role="user", content=request.user_input))
     
     try:
-        response = await provider.chat_completion(messages, json_mode=True)
+        response = await llm.chat(messages, json_mode=True)
         
         # Parse the JSON response
         try:

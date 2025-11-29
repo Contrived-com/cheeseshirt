@@ -9,6 +9,8 @@ on:
       - 'api/**'
       - 'web/**'
       - 'monger/**'
+      - 'llm-openai/**'
+      - 'llm-ollama/**'
       - '.github/workflows/build-and-push.yml'
   pull_request:
     branches:
@@ -21,6 +23,8 @@ env:
   API_IMAGE: ghcr.io/contrived-com/cheeseshirt-api
   WEB_IMAGE: ghcr.io/contrived-com/cheeseshirt-web
   MONGER_IMAGE: ghcr.io/contrived-com/cheeseshirt-monger
+  LLM_OPENAI_IMAGE: ghcr.io/contrived-com/cheeseshirt-llm-openai
+  LLM_OLLAMA_IMAGE: ghcr.io/contrived-com/cheeseshirt-llm-ollama
 
 jobs:
   build-api:
@@ -155,10 +159,98 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  build-llm-openai:
+    name: Build LLM OpenAI Sidecar
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for LLM OpenAI
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.LLM_OPENAI_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push LLM OpenAI image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./llm-openai
+          file: ./llm-openai/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-llm-ollama:
+    name: Build LLM Ollama Sidecar
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for LLM Ollama
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.LLM_OLLAMA_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push LLM Ollama image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./llm-ollama
+          file: ./llm-ollama/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   # Optional: Create a release with all images tagged together
   tag-release:
     name: Tag Release
-    needs: [build-api, build-monger, build-web]
+    needs: [build-api, build-monger, build-web, build-llm-openai, build-llm-ollama]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     permissions:

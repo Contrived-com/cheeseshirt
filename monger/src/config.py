@@ -14,14 +14,10 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 3002
     
-    # LLM Provider - abstracted so we can swap implementations
-    llm_provider: str = "openai"  # options: "openai", "local" (future)
-    
-    # OpenAI (only used if llm_provider == "openai")
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o"
-    openai_temperature: float = 0.7
-    openai_max_tokens: int = 4000
+    # LLM Sidecar - Monger talks to this via HTTP
+    # The sidecar handles the actual LLM (OpenAI, Ollama, etc.)
+    llm_service_url: str = "http://llm:11435"
+    llm_service_timeout: float = 120.0  # LLM calls can be slow
     
     # Character config path
     character_config_path: str = "/app/config/monger.json"
@@ -70,4 +66,3 @@ def load_character_config() -> dict:
     
     with open(config_path) as f:
         return json.load(f)
-

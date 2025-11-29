@@ -1,11 +1,17 @@
-# Monger Service - Python LLM service
-# Handles all LLM interactions for the Monger character
+# Monger Service - Character logic for the Monger
+#
+# This service handles the Monger's personality, conversation state,
+# and character logic. It talks to an LLM sidecar (llm-openai, llm-ollama)
+# via HTTP, so it doesn't need any LLM dependencies itself.
+#
+# This keeps the image small and allows updating the character
+# without re-downloading large LLM images.
 
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies (no LLM libs needed - that's the sidecar's job)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -26,8 +32,9 @@ USER monger
 ENV HOST=0.0.0.0
 ENV PORT=3002
 ENV LOG_LEVEL=info
-ENV LLM_PROVIDER=openai
 ENV CHARACTER_CONFIG_PATH=/app/config/monger.json
+ENV LLM_SERVICE_URL=http://llm:11435
+ENV LLM_SERVICE_TIMEOUT=120.0
 
 # Expose the service port
 EXPOSE 3002

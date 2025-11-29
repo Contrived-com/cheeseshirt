@@ -1,8 +1,9 @@
 """
-LLM provider abstraction layer.
+LLM client for talking to the sidecar service.
+
+The Monger doesn't care what LLM is behind the sidecar -
+it just sends messages and gets responses via HTTP.
 """
-from .base import LLMProvider, LLMMessage, LLMResponse
-from .factory import get_llm_provider
+from .client import LLMClient, LLMMessage, LLMResponse, get_llm_client
 
-__all__ = ["LLMProvider", "LLMMessage", "LLMResponse", "get_llm_provider"]
-
+__all__ = ["LLMClient", "LLMMessage", "LLMResponse", "get_llm_client"]
