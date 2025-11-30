@@ -40,60 +40,61 @@ services:
   # ==========================================================================
 
   # ---------------------------------------------------------------------------
-  # Option 1: OpenAI (cloud API) - DEFAULT
+  # Option 1: OpenAI (cloud API)
   # ---------------------------------------------------------------------------
   # Smallest image, requires API key, charges per token
-  llm:
-    image: ghcr.io/contrived-com/cheeseshirt-llm-openai:latest
-    build:
-      context: ./llm-openai
-      dockerfile: Dockerfile
-    container_name: cheeseshirt-llm
-    restart: unless-stopped
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - MODEL_NAME=${LLM_MODEL:-gpt-4o}
-      - DEFAULT_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
-      - DEFAULT_MAX_TOKENS=${LLM_MAX_TOKENS:-1024}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-    healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:11435/health').raise_for_status()"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 5s
-    networks:
-      - cheeseshirt
-
-  # ---------------------------------------------------------------------------
-  # Option 2: Ollama CPU-only (model pulled at runtime)
-  # ---------------------------------------------------------------------------
-  # Uses alpine/ollama (~22MB base), model downloaded on first start
-  # Good for development or when you want to easily switch models
   # 
   # llm:
-  #   image: ghcr.io/contrived-com/cheeseshirt-llm-ollama:latest
+  #   image: ghcr.io/contrived-com/cheeseshirt-llm-openai:latest
   #   build:
-  #     context: ./llm-ollama
+  #     context: ./llm-openai
   #     dockerfile: Dockerfile
   #   container_name: cheeseshirt-llm
   #   restart: unless-stopped
   #   environment:
-  #     - MODEL_NAME=${LLM_MODEL:-phi3.5}
+  #     - OPENAI_API_KEY=${OPENAI_API_KEY}
+  #     - MODEL_NAME=${LLM_MODEL:-gpt-4o}
   #     - DEFAULT_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
   #     - DEFAULT_MAX_TOKENS=${LLM_MAX_TOKENS:-1024}
   #     - LOG_LEVEL=${LOG_LEVEL:-info}
-  #   volumes:
-  #     # Persist downloaded models between restarts
-  #     - ollama-models:/root/.ollama
   #   healthcheck:
-  #     test: ["CMD", "wget", "-q", "-O-", "http://localhost:11435/health"]
+  #     test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:11435/health').raise_for_status()"]
   #     interval: 30s
   #     timeout: 10s
   #     retries: 3
-  #     start_period: 120s  # Model download can take a while on first start
+  #     start_period: 5s
   #   networks:
   #     - cheeseshirt
+
+  # ---------------------------------------------------------------------------
+  # Option 2: Ollama CPU-only (model pulled at runtime) - ACTIVE
+  # ---------------------------------------------------------------------------
+  # Uses alpine/ollama (~22MB base), model downloaded on first start
+  # Model is pinned to specific version for reproducibility
+  llm:
+    image: ghcr.io/contrived-com/cheeseshirt-llm-ollama:latest
+    build:
+      context: ./llm-ollama
+      dockerfile: Dockerfile
+    container_name: cheeseshirt-llm
+    restart: unless-stopped
+    environment:
+      # Pinned to specific quantization for reproducibility
+      - MODEL_NAME=phi3.5:3.8b-mini-instruct-q4_K_M
+      - DEFAULT_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
+      - DEFAULT_MAX_TOKENS=${LLM_MAX_TOKENS:-1024}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      # Persist downloaded models between restarts
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:11435/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s  # Model download can take a while on first start
+    networks:
+      - cheeseshirt
 
   # ---------------------------------------------------------------------------
   # Option 3: Ollama CPU-only with phi3.5 baked in (fat image)
