@@ -9,8 +9,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application
 COPY . .
 
-# Create directories for persistence
-RUN mkdir -p /app/data/Orders /app/data/state /app/data/conversations
+# Create directories for persistence (all lowercase)
+RUN mkdir -p /app/data/orders /app/data/state /app/data/conversations
 
 # Expose port
 EXPOSE 8002

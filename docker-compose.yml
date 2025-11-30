@@ -185,12 +185,12 @@ services:
     environment:
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
       - POLL_INTERVAL_SECONDS=${STRIPE_POLL_INTERVAL:-300}
-      - ORDERS_DIR=/app/data/Orders
+      - ORDERS_DIR=/app/data/orders
       - STATE_DIR=/app/data/state
       - CONVERSATIONS_DIR=/app/data/conversations
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
-      - ${DATA_PATH:-./data}/Orders:/app/data/Orders
+      - ${DATA_PATH:-./data}/orders:/app/data/orders
       - ${DATA_PATH:-./data}/state:/app/data/state
       - ${DATA_PATH:-./data}/conversations:/app/data/conversations:ro
     healthcheck:

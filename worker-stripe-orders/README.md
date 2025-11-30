@@ -10,7 +10,7 @@ A background worker that polls Stripe for successful payments and persists order
    - Shipping address (name, address, city, state, zip, country, phone)
    - Size (from metadata)
    - Phrase (from metadata) - the custom text for the shirt graphic
-3. **Persists orders** to local filesystem under `Orders/<payment_intent_id>/order.json`
+3. **Persists orders** to local filesystem under `orders/<payment_intent_id>/order.json`
 4. **Tracks sync state** to avoid re-processing orders
 
 ## Setup
@@ -50,7 +50,7 @@ The worker will start polling immediately and expose an API on port 8002.
 
 ```bash
 docker build -t cheeseshirt-worker-stripe .
-docker run -e STRIPE_SECRET_KEY=sk_xxx -v ./Orders:/app/Orders cheeseshirt-worker-stripe
+docker run -e STRIPE_SECRET_KEY=sk_xxx -v ./data/orders:/app/data/orders cheeseshirt-worker-stripe
 ```
 
 ## Order Data Structure

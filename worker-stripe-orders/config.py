@@ -25,8 +25,8 @@ class Config(BaseSettings):
     # Polling
     POLL_INTERVAL_SECONDS: int = 300  # 5 minutes
     
-    # Storage
-    ORDERS_DIR: str = "Orders"
+    # Storage (all lowercase for easy tab-completion)
+    ORDERS_DIR: str = "orders"
     STATE_DIR: str = "state"
     CONVERSATIONS_DIR: str = "conversations"  # Where API writes conversation logs
     
