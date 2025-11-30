@@ -1,0 +1,67 @@
+{
+  "_comment": "The Monger's network. He knows who's who.",
+  "referrers": [
+    {
+      "id": "sean-reardon",
+      "name": "Sean Reardon",
+      "nickname": "the architect",
+      "emails": ["sean@cheeseshirt.com"],
+      "phones": [],
+      "tier": "ultra",
+      "purchases": 10,
+      "notes": "runs the operation",
+      "relationships": [
+        { "type": "sister", "id": "sam-reardon" },
+        { "type": "friend", "id": "mike-chen" }
+      ]
+    },
+    {
+      "id": "sam-reardon",
+      "name": "Sam Reardon",
+      "nickname": null,
+      "emails": ["sam@example.com", "samantha.reardon@work.com"],
+      "phones": ["+15551234567"],
+      "tier": "vip",
+      "purchases": 6,
+      "notes": null,
+      "relationships": [
+        { "type": "brother", "id": "sean-reardon" }
+      ]
+    },
+    {
+      "id": "mike-chen",
+      "name": "Mike Chen",
+      "nickname": "big mike",
+      "emails": ["mike@example.com"],
+      "phones": ["+15559876543"],
+      "tier": "buyer",
+      "purchases": 3,
+      "notes": "always orders XL",
+      "relationships": [
+        { "type": "friend", "id": "sean-reardon" },
+        { "type": "coworker", "id": "jenny-liu" }
+      ]
+    },
+    {
+      "id": "jenny-liu",
+      "name": "Jenny Liu",
+      "nickname": null,
+      "emails": ["jenny.liu@company.com"],
+      "phones": [],
+      "tier": "buyer",
+      "purchases": 2,
+      "notes": null,
+      "relationships": [
+        { "type": "coworker", "id": "mike-chen" }
+      ]
+    }
+  ],
+  
+  "tiers": {
+    "ultra": { "discount": 25, "description": "inner circle" },
+    "vip": { "discount": 20, "description": "trusted buyer" },
+    "buyer": { "discount": 10, "description": "known face" },
+    "friend_of": { "discount": 5, "description": "knows someone who knows someone" }
+  }
+}
+
