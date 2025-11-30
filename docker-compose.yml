@@ -1,4 +1,5 @@
 # cheeseshirt docker-compose
+# just some silly text to provoke a rebuild
 #
 # CI/CD: GitHub Actions builds and pushes images to GHCR on merge to main.
 #        See .github/workflows/build-and-push.yml
