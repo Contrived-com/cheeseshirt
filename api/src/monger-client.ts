@@ -37,6 +37,9 @@ export interface CurrentState {
 export interface CustomerContext {
   total_shirts_bought: number;
   is_repeat_buyer: boolean;
+  last_purchase_at: string | null;  // ISO timestamp of last purchase
+  is_blocked: boolean;  // Time-waster blocked status
+  blocked_until: string | null;  // When the block expires
   current_state: CurrentState;
   has_referral: boolean;
   referrer_email: string | null;
@@ -111,6 +114,25 @@ export interface DiagnosticChatRequest {
 export interface DiagnosticChatResponse {
   reply: string;
   diagnostic_data: Record<string, unknown> | null;
+}
+
+export interface ReferralLookupRequest {
+  query: string;  // Name (fuzzy), email (exact), or phone (exact)
+}
+
+export interface ReferralLookupResponse {
+  found: boolean;
+  referrer_id: string | null;
+  name: string | null;
+  nickname: string | null;
+  tier: string | null;  // ultra, vip, buyer, friend_of
+  discount: number;
+  purchases: number;
+  match_type: string | null;  // direct or friend_of
+  match_method: string | null;  // name, email, phone
+  connected_through: string | null;  // For friend_of matches
+  relationship: string | null;  // e.g., "sister", "coworker"
+  monger_line: string;  // The Monger's reaction
 }
 
 export interface VersionResponse {
@@ -220,5 +242,12 @@ export async function getVersion(): Promise<VersionResponse> {
  */
 export async function diagnosticChat(request: DiagnosticChatRequest): Promise<DiagnosticChatResponse> {
   return mongerRequest<DiagnosticChatResponse>('POST', '/diagnostic/chat', request);
+}
+
+/**
+ * Look up a referrer by name, email, or phone.
+ */
+export async function lookupReferral(request: ReferralLookupRequest): Promise<ReferralLookupResponse> {
+  return mongerRequest<ReferralLookupResponse>('POST', '/referral-lookup', request);
 }
 

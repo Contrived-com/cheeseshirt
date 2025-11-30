@@ -7,13 +7,21 @@
 import { logger } from './logger.js';
 import { 
   getSession, 
-  updateSessionState, 
+  updateSession, 
   addMessage, 
-  getSessionMessages,
-  SessionRow,
-  CustomerRow 
-} from './db.js';
+  getMessages,
+  Session,
+} from './sessions.js';
 import * as mongerClient from './monger-client.js';
+
+// Customer type from cookie state
+export interface CustomerRow {
+  id: string;
+  total_shirts_bought: number;
+  last_purchase_at: string | null;
+  is_blocked: boolean;
+  blocked_until: string | null;
+}
 
 // Re-export types for backward compatibility
 export interface ShippingAddress {
@@ -131,26 +139,15 @@ export async function getMongerReply(
     throw new Error('Session not found');
   }
   
-  // Get conversation history
-  const messageHistory = getSessionMessages(sessionId, 10).reverse();
+  // Get conversation history from in-memory session
+  const messageHistory = getMessages(sessionId, 10);
   
   // Check if in checkout mode
-  const isCheckoutMode = session.conversation_state === 'checkout_started' || 
-                         session.conversation_state === 'collecting_shipping';
+  const isCheckoutMode = session.conversationState === 'checkout_started' || 
+                         session.conversationState === 'collecting_shipping';
   
-  // Parse existing checkout state
-  let checkoutState: mongerClient.CheckoutState = {
-    shipping: { name: null, line1: null, city: null, state: null, zip: null, country: 'US' },
-    email: null
-  };
-  
-  if (session.checkout_state) {
-    try {
-      checkoutState = JSON.parse(session.checkout_state);
-    } catch (e) {
-      // ignore parse errors
-    }
-  }
+  // Get existing checkout state from session
+  const checkoutState = session.checkoutState;
   
   // Build the request to the Monger service
   const chatRequest: mongerClient.ChatRequest = {
@@ -158,18 +155,21 @@ export async function getMongerReply(
     context: {
       total_shirts_bought: customer.total_shirts_bought,
       is_repeat_buyer: customer.total_shirts_bought > 0,
+      last_purchase_at: customer.last_purchase_at,
+      is_blocked: customer.is_blocked,
+      blocked_until: customer.blocked_until,
       current_state: {
-        has_affirmation: session.collected_affirmation === 1,
-        size: session.collected_size,
-        phrase: session.collected_phrase,
+        has_affirmation: session.collectedAffirmation,
+        size: session.collectedSize,
+        phrase: session.collectedPhrase,
       },
-      has_referral: !!session.referrer_email,
-      referrer_email: session.referrer_email,
+      has_referral: !!session.referrerEmail,
+      referrer_email: session.referrerEmail,
       is_checkout_mode: isCheckoutMode,
       checkout_state: checkoutState,
     },
     conversation_history: messageHistory.map(msg => ({
-      role: msg.role as 'user' | 'assistant',
+      role: msg.role,
       content: msg.content,
     })),
   };
@@ -216,7 +216,7 @@ export async function getMongerReply(
       },
     };
     
-    // Store messages
+    // Store messages in session (in-memory)
     addMessage(sessionId, 'user', userInput);
     addMessage(sessionId, 'assistant', normalizedResponse.reply);
     
@@ -229,12 +229,12 @@ export async function getMongerReply(
     }
     
     // Update session state
-    updateSessionState(sessionId, {
+    updateSession(sessionId, {
       conversationState: convState,
       collectedAffirmation: normalizedResponse.state.hasAffirmation,
       collectedSize: normalizedResponse.state.size,
       collectedPhrase: normalizedResponse.state.phrase,
-      checkoutState: JSON.stringify(normalizedResponse.state.checkout),
+      checkoutState: normalizedResponse.state.checkout,
     });
     
     return normalizedResponse;
@@ -252,9 +252,9 @@ export async function getMongerReply(
     return {
       reply: "...signal's bad.  say that again.",
       state: {
-        hasAffirmation: session.collected_affirmation === 1,
-        size: session.collected_size,
-        phrase: session.collected_phrase,
+        hasAffirmation: session.collectedAffirmation,
+        size: session.collectedSize,
+        phrase: session.collectedPhrase,
         pendingConfirmation: false,
         readyForCheckout: false,
         readyForPayment: false,
@@ -390,8 +390,8 @@ export async function getDiagnosticReply(
   sessionId: string,
   userInput: string
 ): Promise<{ reply: string; diagnosticData?: Record<string, unknown> }> {
-  // Get conversation history for diagnostic mode
-  const messageHistory = getSessionMessages(sessionId, 10).reverse();
+  // Get conversation history from in-memory session
+  const messageHistory = getMessages(sessionId, 10);
   
   logger.debug('Diagnostic chat request', {
     sessionId: sessionId.substring(0, 8) + '...',
@@ -402,12 +402,12 @@ export async function getDiagnosticReply(
     const response = await mongerClient.diagnosticChat({
       user_input: userInput,
       conversation_history: messageHistory.map(msg => ({
-        role: msg.role as 'user' | 'assistant',
+        role: msg.role,
         content: msg.content,
       })),
     });
     
-    // Store messages
+    // Store messages in session
     addMessage(sessionId, 'user', userInput);
     addMessage(sessionId, 'assistant', response.reply);
     

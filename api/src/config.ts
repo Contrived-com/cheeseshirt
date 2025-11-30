@@ -33,8 +33,8 @@ export const config = {
   // Site URL (for receipts, etc)
   siteUrl: process.env.SITE_URL || 'https://cheeseshirt.com',
   
-  // Database
-  databasePath: process.env.DATABASE_PATH || './data/cheeseshirt.db',
+  // Conversations (append-only JSONL files)
+  conversationsPath: process.env.CONVERSATIONS_PATH || './data/conversations',
   
   // Cookie
   cookieDomain: process.env.COOKIE_DOMAIN || 'localhost',

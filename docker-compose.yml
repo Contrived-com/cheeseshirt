@@ -129,14 +129,14 @@ services:
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
       - SHIRT_PRICE_CENTS=${SHIRT_PRICE_CENTS:-3500}
       - SITE_URL=${SITE_URL:-https://cheeseshirt.com}
-      - DATABASE_PATH=/app/data/cheeseshirt.db
+      - CONVERSATIONS_PATH=/app/data/conversations
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       - TIME_WASTER_THRESHOLD_HOURS=${TIME_WASTER_THRESHOLD_HOURS:-24}
       - LOG_PATH=/app/logs/cheeseshirt-api.log
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       - ${LOG_PATH:-./logs}:/app/logs
-      - api-data:/app/data
+      - ${DATA_PATH:-./data}/conversations:/app/data/conversations
     ports:
       - "127.0.0.1:3001:3001"
     healthcheck:
@@ -171,10 +171,40 @@ services:
     networks:
       - cheeseshirt
 
+  # ==========================================================================
+  # Background Workers
+  # ==========================================================================
+
+  worker-stripe-orders:
+    image: ghcr.io/contrived-com/cheeseshirt-worker-stripe-orders:latest
+    build:
+      context: ./worker-stripe-orders
+      dockerfile: Dockerfile
+    container_name: cheeseshirt-worker-stripe-orders
+    restart: unless-stopped
+    environment:
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - POLL_INTERVAL_SECONDS=${STRIPE_POLL_INTERVAL:-300}
+      - ORDERS_DIR=/app/data/Orders
+      - STATE_DIR=/app/data/state
+      - CONVERSATIONS_DIR=/app/data/conversations
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ${DATA_PATH:-./data}/Orders:/app/data/Orders
+      - ${DATA_PATH:-./data}/state:/app/data/state
+      - ${DATA_PATH:-./data}/conversations:/app/data/conversations:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8002/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - cheeseshirt
+
 networks:
   cheeseshirt:
     driver: bridge
 
 volumes:
-  api-data:
   ollama-models:

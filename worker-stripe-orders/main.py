@@ -2,6 +2,7 @@
 Stripe Orders Worker
 
 Polls Stripe for successful payments and persists order data locally.
+Also extracts conversation logs for each order from the API's conversation files.
 """
 
 import os
@@ -9,7 +10,7 @@ import json
 import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -41,6 +42,119 @@ def get_orders_dir() -> Path:
     return orders_dir
 
 
+def get_conversations_dir() -> Path:
+    """Get path to the conversations directory."""
+    return Path(config.CONVERSATIONS_DIR)
+
+
+def extract_conversation(session_id: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    Extract conversation messages for a given session ID from the JSONL files.
+    
+    The API writes conversations to files like: conversations/{customer_id}.jsonl
+    Each line is a JSON object with format:
+      {"t":"start","sid":"session-id","ts":"..."}
+      {"r":"user","c":"message","sid":"session-id","ts":"..."}
+      {"r":"assistant","c":"message","sid":"session-id","ts":"..."}
+      {"t":"end","sid":"session-id","ts":"..."}
+    
+    Returns a list of message dicts or None if not found.
+    """
+    conversations_dir = get_conversations_dir()
+    
+    if not conversations_dir.exists():
+        print(f"Conversations directory not found: {conversations_dir}")
+        return None
+    
+    messages = []
+    found = False
+    
+    # Search through all JSONL files for the session_id
+    for jsonl_file in conversations_dir.glob("*.jsonl"):
+        try:
+            with open(jsonl_file, 'r') as f:
+                in_session = False
+                
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    
+                    # Check if this entry belongs to our session
+                    entry_sid = entry.get("sid")
+                    
+                    if entry_sid == session_id:
+                        found = True
+                        entry_type = entry.get("t")
+                        role = entry.get("r")
+                        
+                        if entry_type == "start":
+                            in_session = True
+                            messages.append({
+                                "type": "session_start",
+                                "timestamp": entry.get("ts"),
+                            })
+                        elif entry_type == "end":
+                            messages.append({
+                                "type": "session_end",
+                                "reason": entry.get("reason"),
+                                "timestamp": entry.get("ts"),
+                            })
+                            in_session = False
+                        elif entry_type == "purchase":
+                            messages.append({
+                                "type": "purchase",
+                                "payment_intent_id": entry.get("pi"),
+                                "timestamp": entry.get("ts"),
+                            })
+                        elif role in ("user", "assistant"):
+                            messages.append({
+                                "role": role,
+                                "content": entry.get("c", ""),
+                                "timestamp": entry.get("ts"),
+                            })
+        
+        except Exception as e:
+            print(f"Error reading {jsonl_file}: {e}")
+            continue
+        
+        if found:
+            break  # Found the session, no need to search more files
+    
+    return messages if found else None
+
+
+def save_conversation(order_dir: Path, session_id: str) -> bool:
+    """
+    Extract and save conversation for an order.
+    
+    Returns True if conversation was found and saved.
+    """
+    conversation = extract_conversation(session_id)
+    
+    if not conversation:
+        print(f"No conversation found for session {session_id[:8]}...")
+        return False
+    
+    conversation_file = order_dir / "conversation.json"
+    conversation_data = {
+        "session_id": session_id,
+        "extracted_at": datetime.now().isoformat(),
+        "message_count": len([m for m in conversation if m.get("role")]),
+        "messages": conversation,
+    }
+    
+    conversation_file.write_text(json.dumps(conversation_data, indent=2, default=str))
+    print(f"Saved conversation ({len(conversation)} entries) for session {session_id[:8]}...")
+    
+    return True
+
+
 def load_sync_state() -> OrderSyncState:
     """Load sync state from disk."""
     state_file = get_state_file_path()
@@ -61,19 +175,26 @@ def save_sync_state(state: OrderSyncState):
 
 def save_order(order: Order) -> Path:
     """
-    Save an order to disk.
+    Save an order to disk, including its conversation.
     
-    Creates: Orders/<payment_intent_id>/order.json
+    Creates: Orders/<payment_intent_id>/
+               ├── order.json
+               └── conversation.json (if found)
     
-    Returns the path to the saved file.
+    Returns the path to the order directory.
     """
     order_dir = get_orders_dir() / order.id
     order_dir.mkdir(parents=True, exist_ok=True)
     
+    # Save order data
     order_file = order_dir / "order.json"
     order_file.write_text(order.model_dump_json(indent=2, default=str))
     
-    return order_file
+    # Try to extract and save conversation
+    if order.session_id:
+        save_conversation(order_dir, order.session_id)
+    
+    return order_dir
 
 
 def get_local_orders() -> List[str]:

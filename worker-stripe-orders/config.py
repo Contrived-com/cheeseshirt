@@ -28,6 +28,7 @@ class Config(BaseSettings):
     # Storage
     ORDERS_DIR: str = "Orders"
     STATE_DIR: str = "state"
+    CONVERSATIONS_DIR: str = "conversations"  # Where API writes conversation logs
     
     # Server
     HOST: str = "0.0.0.0"

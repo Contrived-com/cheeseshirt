@@ -38,6 +38,9 @@ class CustomerContext(BaseModel):
     """Context about the customer for the Monger to use."""
     total_shirts_bought: int = 0
     is_repeat_buyer: bool = False
+    last_purchase_at: Optional[str] = None  # ISO timestamp of last purchase
+    is_blocked: bool = False  # Time-waster blocked status (from cookie)
+    blocked_until: Optional[str] = None  # When the block expires
     current_state: CurrentState = Field(default_factory=CurrentState)
     has_referral: bool = False
     referrer_email: Optional[str] = None
@@ -167,4 +170,29 @@ class DiagnosticChatResponse(BaseModel):
     """Response from diagnostic mode chat."""
     reply: str
     diagnostic_data: Optional[dict] = None
+
+
+# =============================================================================
+# Referral Lookup Models
+# =============================================================================
+
+class ReferralLookupRequest(BaseModel):
+    """Request to look up a referrer by name, email, or phone."""
+    query: str  # Name (fuzzy), email (exact), or phone (exact)
+
+
+class ReferralLookupResponse(BaseModel):
+    """Response from referral lookup."""
+    found: bool
+    referrer_id: Optional[str] = None
+    name: Optional[str] = None
+    nickname: Optional[str] = None
+    tier: Optional[str] = None  # ultra, vip, buyer, friend_of
+    discount: int = 0
+    purchases: int = 0
+    match_type: Optional[str] = None  # direct or friend_of
+    match_method: Optional[str] = None  # name, email, phone
+    connected_through: Optional[str] = None  # For friend_of matches
+    relationship: Optional[str] = None  # e.g., "sister", "coworker"
+    monger_line: str = ""  # The Monger's reaction
 

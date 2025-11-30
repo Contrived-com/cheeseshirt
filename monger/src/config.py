@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Character config path
     character_config_path: str = "/app/config/monger.json"
     
+    # Referrals data path (the Monger's network)
+    referrals_path: str = "/app/data/referrals.json"
+    
     # Logging
     log_level: str = "info"
     log_path: str = ""  # e.g. /app/logs/monger.log

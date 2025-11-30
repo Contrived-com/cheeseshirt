@@ -10,13 +10,11 @@
     "dev": "tsx watch src/server.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^11.5.0",
     "dotenv": "^16.4.5",
     "stripe": "^20.0.0",
     "uuid": "^10.0.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.7.5",
     "@types/uuid": "^10.0.0",
     "tsx": "^4.19.1",

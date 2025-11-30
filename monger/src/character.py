@@ -101,16 +101,47 @@ def build_context_prompt(context: CustomerContext) -> str:
     Build a context prompt based on current session state.
     
     This provides the Monger with info about the customer and what's been collected.
+    The customer data comes from their browser cookie - they control it (low stakes).
     """
+    # Determine warmth level based on purchase history
+    warmth = "cold stranger"
+    if context.is_blocked:
+        warmth = "time-waster (blocked)"
+    elif context.total_shirts_bought >= 5:
+        warmth = "trusted regular"
+    elif context.total_shirts_bought >= 2:
+        warmth = "familiar face"
+    elif context.total_shirts_bought == 1:
+        warmth = "been here before"
+    
     lines = [
-        "context about this visitor:",
-        f"- totalShirtsBought: {context.total_shirts_bought}",
-        f"- isRepeatBuyer: {context.is_repeat_buyer}",
+        "context about this visitor (from their browser - they could lie, low stakes):",
+        f"- shirtsBought: {context.total_shirts_bought}",
+        f"- warmth: {warmth}",
+    ]
+    
+    # Add last purchase info if available
+    if context.last_purchase_at:
+        lines.append(f"- lastPurchase: {context.last_purchase_at}")
+    
+    # Add blocked status if relevant
+    if context.is_blocked and context.blocked_until:
+        lines.append(f"- blockedUntil: {context.blocked_until} (time-waster)")
+    
+    lines.extend([
         f"- currentState: affirmation={'yes' if context.current_state.has_affirmation else 'no'}, "
         f"size={context.current_state.size or 'not yet'}, "
         f"phrase={context.current_state.phrase or 'not yet'}",
         f"- hasReferral: {'yes, from ' + context.referrer_email if context.has_referral and context.referrer_email else 'no'}",
-    ]
+    ])
+    
+    # Mood guidance based on warmth
+    if context.total_shirts_bought >= 5:
+        lines.append("\nthis one's a regular.  treat em warm.  skip the suspicion.")
+    elif context.total_shirts_bought >= 2:
+        lines.append("\nthey've bought before.  lean warmer, less suspicious.")
+    elif context.is_blocked:
+        lines.append("\nthis one wasted your time before.  stay cold, suspicious.")
     
     if context.is_checkout_mode:
         checkout = context.checkout_state

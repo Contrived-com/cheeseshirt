@@ -31,12 +31,15 @@ from .models import (
     OpeningLineResponse,
     ReferralLineRequest,
     ReferralLineResponse,
+    ReferralLookupRequest,
+    ReferralLookupResponse,
     HealthResponse,
     VersionResponse,
     LogsResponse,
     DiagnosticChatRequest,
     DiagnosticChatResponse,
 )
+from .referrals import lookup_referral, get_network
 from .character import (
     build_system_prompt,
     build_context_prompt,
@@ -115,6 +118,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("Failed to load character config: %s", e)
         raise
+    
+    # Load referral network
+    try:
+        network = get_network()
+        logger.info("Referral network loaded: %d referrers", len(network.referrers))
+    except Exception as e:
+        logger.warning("Failed to load referral network: %s", e)
     
     # Test LLM sidecar connection
     try:
@@ -548,6 +558,72 @@ async def referral_line(request: ReferralLineRequest):
     )
     
     return ReferralLineResponse(line=line)
+
+
+@app.post("/referral-lookup", response_model=ReferralLookupResponse)
+async def referral_lookup(request: ReferralLookupRequest):
+    """
+    Look up a referrer by name, email, or phone.
+    
+    The Monger knows his people. This searches the network:
+    - Name: Fuzzy match (~80% similarity)
+    - Email: Exact match
+    - Phone: Normalized exact match
+    
+    Also finds 2nd-degree connections ("friend of a friend").
+    """
+    logger.debug("Referral lookup: query='%s'", request.query[:50] if request.query else "")
+    
+    match = lookup_referral(request.query)
+    
+    if not match:
+        logger.debug("Referral lookup: not found")
+        return ReferralLookupResponse(
+            found=False,
+            monger_line="never heard of em. no discount, but you can still get a shirt.",
+        )
+    
+    # Build the Monger's response based on match type and tier
+    if match.match_type == "friend_of":
+        # 2nd-degree connection
+        if match.relationship:
+            monger_line = f"ah, {match.connected_through}'s {match.relationship}. friend of a friend. {match.discount}% off."
+        else:
+            monger_line = f"you know {match.connected_through}? alright, {match.discount}% off."
+    else:
+        # Direct connection
+        if match.tier == "ultra":
+            if match.nickname:
+                monger_line = f"{match.nickname}. inner circle. {match.discount}% off, no questions."
+            else:
+                monger_line = f"{match.name.split()[0].lower()}. inner circle. {match.discount}% off, no questions."
+        elif match.tier == "vip":
+            monger_line = f"trusted buyer. {match.discount}% off."
+        else:
+            monger_line = f"known face. {match.discount}% off."
+    
+    logger.info(
+        "Referral lookup: found %s (%s, %s, %d%%)",
+        match.name,
+        match.tier,
+        match.match_type,
+        match.discount,
+    )
+    
+    return ReferralLookupResponse(
+        found=True,
+        referrer_id=match.referrer_id,
+        name=match.name,
+        nickname=match.nickname,
+        tier=match.tier,
+        discount=match.discount,
+        purchases=match.purchases,
+        match_type=match.match_type,
+        match_method=match.match_method,
+        connected_through=match.connected_through,
+        relationship=match.relationship,
+        monger_line=monger_line,
+    )
 
 
 if __name__ == "__main__":

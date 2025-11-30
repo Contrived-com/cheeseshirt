@@ -5,9 +5,6 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# Install build dependencies for better-sqlite3
-RUN apk add --no-cache python3 make g++
-
 # Copy package files
 COPY package*.json ./
 
@@ -26,9 +23,6 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-# Install runtime dependencies for better-sqlite3
-RUN apk add --no-cache python3 make g++
-
 # Copy package files and install production deps
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
@@ -40,8 +34,8 @@ COPY --from=builder /app/dist ./dist
 RUN addgroup -g 1002 cheeseshirt && \
     adduser -u 1002 -G cheeseshirt -s /bin/sh -D cheeseshirt
 
-# Create data and logs directories
-RUN mkdir -p /app/data /app/logs && chown -R cheeseshirt:cheeseshirt /app/data /app/logs
+# Create data directories (conversations and logs)
+RUN mkdir -p /app/data/conversations /app/logs && chown -R cheeseshirt:cheeseshirt /app/data /app/logs
 
 USER cheeseshirt
 
@@ -49,7 +43,7 @@ USER cheeseshirt
 ENV NODE_ENV=production \
     PORT=3001 \
     HOST=0.0.0.0 \
-    DATABASE_PATH=/app/data/cheeseshirt.db \
+    CONVERSATIONS_PATH=/app/data/conversations \
     LOG_PATH=/app/logs/cheeseshirt-api.log \
     LOG_LEVEL=info
 
@@ -60,4 +54,3 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3001/api/health || exit 1
 
 CMD ["node", "dist/server.js"]
-

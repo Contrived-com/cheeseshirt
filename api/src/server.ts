@@ -4,19 +4,21 @@ import { v4 as uuidv4 } from 'uuid';
 import { config, validateConfig } from './config.js';
 import { logger } from './logger.js';
 import {
-  getOrCreateCustomer,
   createSession,
   getSession,
-  updateCustomerInteraction,
-  markCustomerTimeWaster,
-  isRecentTimeWaster,
-  lookupReferral,
-  createOrUpdateReferral,
-  updateSessionState,
-  addMessage,
-  clearSessionMessages,
-  CustomerRow
-} from './db.js';
+  updateSession,
+  addMessage as addSessionMessage,
+  getMessages,
+  clearMessages,
+  getSessionCount,
+  Session,
+} from './sessions.js';
+import {
+  logSessionStart,
+  logMessage,
+  logSessionEnd,
+  logPurchase,
+} from './conversations.js';
 import { 
   getMongerReply, 
   getOpeningLine, 
@@ -31,6 +33,7 @@ import {
   getDiagnosticEntryMessage,
   getDiagnosticExitMessage,
 } from './monger.js';
+import * as mongerClient from './monger-client.js';
 import { 
   createPaymentIntent, 
   updatePaymentIntentShipping,
@@ -38,7 +41,6 @@ import {
   getPublishableKey,
   testStripeConnection
 } from './stripe.js';
-import { db } from './db.js';
 
 // Initialize logger before anything else
 logger.init(config.logPath || undefined, config.logLevel);
@@ -126,6 +128,14 @@ function sendError(res: ServerResponse, message: string, status = 400) {
   sendJson(res, { error: message }, status);
 }
 
+// Customer state stored in cookie
+interface CustomerState {
+  id: string;
+  shirtsBought: number;
+  lastPurchase: string | null;
+  blockedUntil: string | null;
+}
+
 // Parse cookie from request
 function parseCookies(req: IncomingMessage): Record<string, string> {
   const cookies: Record<string, string> = {};
@@ -143,6 +153,37 @@ function parseCookies(req: IncomingMessage): Record<string, string> {
   return cookies;
 }
 
+// Parse customer state from cookie
+function parseCustomerState(cookies: Record<string, string>): CustomerState | null {
+  const stateCookie = cookies['cheeseshirt_customer'];
+  if (!stateCookie) return null;
+  
+  try {
+    return JSON.parse(stateCookie) as CustomerState;
+  } catch {
+    return null;
+  }
+}
+
+// Get or create customer state
+function getOrCreateCustomerState(cookies: Record<string, string>): CustomerState {
+  const existing = parseCustomerState(cookies);
+  if (existing && existing.id) return existing;
+  
+  return {
+    id: uuidv4(),
+    shirtsBought: 0,
+    lastPurchase: null,
+    blockedUntil: null,
+  };
+}
+
+// Check if customer is currently blocked (time-waster)
+function isCustomerBlocked(customer: CustomerState): boolean {
+  if (!customer.blockedUntil) return false;
+  return new Date(customer.blockedUntil) > new Date();
+}
+
 // Set cookie in response
 function setCookie(res: ServerResponse, name: string, value: string, maxAgeDays = 365) {
   const maxAge = maxAgeDays * 24 * 60 * 60;
@@ -154,10 +195,16 @@ function setCookie(res: ServerResponse, name: string, value: string, maxAgeDays 
   );
 }
 
+// Set customer state cookie
+function setCustomerStateCookie(res: ServerResponse, customer: CustomerState) {
+  setCookie(res, 'cheeseshirt_customer', JSON.stringify(customer));
+}
+
 // API Handlers
 
 interface SessionInitRequest {
-  cookieId?: string;
+  // Frontend can pass customer state if cookie wasn't readable
+  customerState?: CustomerState;
 }
 
 interface SessionInitResponse {
@@ -167,66 +214,67 @@ interface SessionInitResponse {
   isRecentTimeWaster: boolean;
   isRepeatCustomer: boolean;
   recentOrdersCount: number;
+  customerState: CustomerState;
 }
 
 async function handleSessionInit(req: IncomingMessage, res: ServerResponse) {
   const body = await parseBody<SessionInitRequest>(req);
   const cookies = parseCookies(req);
   
-  // Get or create customer ID
-  let customerId = body.cookieId || cookies['cheeseshirt_id'];
-  let isNewCustomer = false;
+  // Get or create customer state from cookie (or body fallback)
+  let customer = body.customerState || getOrCreateCustomerState(cookies);
+  const isNewCustomer = customer.shirtsBought === 0 && !customer.lastPurchase;
   
-  if (!customerId) {
-    customerId = uuidv4();
-    isNewCustomer = true;
-  }
-  
-  // Set cookie if new
-  if (isNewCustomer) {
-    setCookie(res, 'cheeseshirt_id', customerId);
-  }
-  
-  // Get customer record
-  const customer = getOrCreateCustomer(customerId);
-  
-  // Check if time waster
-  const timeWaster = isRecentTimeWaster(customerId, config.timeWasterThresholdHours);
+  // Check if blocked (time-waster)
+  const isBlocked = isCustomerBlocked(customer);
   
   // Create new session
   const sessionId = uuidv4();
-  createSession(sessionId, customerId);
+  createSession(sessionId, customer.id);
   
-  logger.session('init', sessionId, customerId, { 
+  // Log conversation start to file
+  logSessionStart(customer.id, sessionId);
+  
+  logger.session('init', sessionId, customer.id, { 
     isNewCustomer, 
-    isTimeWaster: timeWaster,
-    totalShirtsBought: customer.total_shirts_bought 
+    isBlocked,
+    shirtsBought: customer.shirtsBought,
   });
   
   // Get opening line (try async first, fallback to sync)
   let openingLine: string;
+  const customerForMonger = {
+    id: customer.id,
+    total_shirts_bought: customer.shirtsBought,
+    last_purchase_at: customer.lastPurchase,
+    is_blocked: isBlocked,
+    blocked_until: customer.blockedUntil,
+  };
+  
   try {
-    openingLine = await getOpeningLineAsync(customer, timeWaster);
+    openingLine = await getOpeningLineAsync(customerForMonger, isBlocked);
   } catch (error) {
     // Fallback to sync version if service is unavailable
-    openingLine = getOpeningLine(customer, timeWaster);
+    openingLine = getOpeningLine(customerForMonger, isBlocked);
   }
   
   // Store opening line as first assistant message
-  if (!timeWaster) {
-    addMessage(sessionId, 'assistant', openingLine);
+  if (!isBlocked) {
+    addSessionMessage(sessionId, 'assistant', openingLine);
+    logMessage(customer.id, sessionId, 'assistant', openingLine);
   }
   
-  // Update interaction timestamp
-  updateCustomerInteraction(customerId);
+  // Update customer state cookie
+  setCustomerStateCookie(res, customer);
   
   const response: SessionInitResponse = {
     sessionId,
-    customerId,
+    customerId: customer.id,
     mongerOpeningLine: openingLine,
-    isRecentTimeWaster: timeWaster,
-    isRepeatCustomer: customer.total_shirts_bought > 0,
-    recentOrdersCount: customer.total_shirts_bought
+    isRecentTimeWaster: isBlocked,
+    isRepeatCustomer: customer.shirtsBought > 0,
+    recentOrdersCount: customer.shirtsBought,
+    customerState: customer,
   };
   
   sendJson(res, response);
@@ -277,6 +325,7 @@ interface ChatResponse {
 
 async function handleChat(req: IncomingMessage, res: ServerResponse) {
   const body = await parseBody<ChatRequest>(req);
+  const cookies = parseCookies(req);
   
   if (!body.sessionId || !body.userInput) {
     logger.warn('Chat: missing required fields', { hasSessionId: !!body.sessionId, hasUserInput: !!body.userInput });
@@ -289,8 +338,9 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
     return sendError(res, 'Invalid session', 404);
   }
   
-  const customer = getOrCreateCustomer(session.customer_id);
-  const inDiagnosticMode = session.diagnostic_mode === 1;
+  // Get customer state from cookie
+  const customer = getOrCreateCustomerState(cookies);
+  const inDiagnosticMode = session.diagnosticMode;
   
   logger.debug('Chat: processing', { 
     sessionId: body.sessionId.substring(0, 8) + '...', 
@@ -302,33 +352,24 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
   // Check for diagnostic mode entry/exit
   if (!inDiagnosticMode && shouldEnterDiagnostic(body.userInput)) {
     logger.info('Chat: entering diagnostic mode', { sessionId: body.sessionId.substring(0, 8) + '...' });
-    updateSessionState(body.sessionId, {
+    updateSession(body.sessionId, {
       conversationState: 'diagnostic',
       diagnosticMode: true,
-      collectedAffirmation: session.collected_affirmation === 1,
-      collectedSize: session.collected_size,
-      collectedPhrase: session.collected_phrase,
-      referrerEmail: session.referrer_email,
-      discountCode: session.discount_code,
-      checkoutState: session.checkout_state,
     });
     
     return sendJson(res, {
       mongerReply: getDiagnosticEntryMessage(),
       conversationState: 'diagnostic',
-      needsSize: !session.collected_size,
-      needsPhrase: !session.collected_phrase,
-      needsAffirmation: session.collected_affirmation !== 1,
+      needsSize: !session.collectedSize,
+      needsPhrase: !session.collectedPhrase,
+      needsAffirmation: !session.collectedAffirmation,
       readyForCheckout: false,
       readyForPayment: false,
       wantsReferralCheck: null,
       mood: 'neutral',
-      collectedSize: session.collected_size,
-      collectedPhrase: session.collected_phrase,
-      checkout: session.checkout_state ? JSON.parse(session.checkout_state) : {
-        shipping: { name: null, line1: null, city: null, state: null, zip: null, country: 'US' },
-        email: null
-      },
+      collectedSize: session.collectedSize,
+      collectedPhrase: session.collectedPhrase,
+      checkout: session.checkoutState,
       uiHints: { skipTypewriter: true, showPaymentForm: false, blocked: false, inputDisabled: false },
       diagnosticMode: true,
     });
@@ -338,36 +379,27 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
     logger.info('Chat: exiting diagnostic mode', { sessionId: body.sessionId.substring(0, 8) + '...' });
     
     // Clear conversation history to avoid confusing the LLM with diagnostic context
-    clearSessionMessages(body.sessionId);
+    clearMessages(body.sessionId);
     logger.debug('Chat: cleared session messages for clean exit from diagnostic mode');
     
-    updateSessionState(body.sessionId, {
+    updateSession(body.sessionId, {
       conversationState: 'conversation',
       diagnosticMode: false,
-      collectedAffirmation: session.collected_affirmation === 1,
-      collectedSize: session.collected_size,
-      collectedPhrase: session.collected_phrase,
-      referrerEmail: session.referrer_email,
-      discountCode: session.discount_code,
-      checkoutState: session.checkout_state,
     });
     
     return sendJson(res, {
       mongerReply: getDiagnosticExitMessage(),
       conversationState: 'conversation',
-      needsSize: !session.collected_size,
-      needsPhrase: !session.collected_phrase,
-      needsAffirmation: session.collected_affirmation !== 1,
+      needsSize: !session.collectedSize,
+      needsPhrase: !session.collectedPhrase,
+      needsAffirmation: !session.collectedAffirmation,
       readyForCheckout: false,
       readyForPayment: false,
       wantsReferralCheck: null,
       mood: 'neutral',
-      collectedSize: session.collected_size,
-      collectedPhrase: session.collected_phrase,
-      checkout: session.checkout_state ? JSON.parse(session.checkout_state) : {
-        shipping: { name: null, line1: null, city: null, state: null, zip: null, country: 'US' },
-        email: null
-      },
+      collectedSize: session.collectedSize,
+      collectedPhrase: session.collectedPhrase,
+      checkout: session.checkoutState,
       uiHints: { skipTypewriter: false, showPaymentForm: false, blocked: false, inputDisabled: false },
       diagnosticMode: false,
     });
@@ -388,12 +420,9 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
         readyForPayment: false,
         wantsReferralCheck: null,
         mood: 'neutral',
-        collectedSize: session.collected_size,
-        collectedPhrase: session.collected_phrase,
-        checkout: session.checkout_state ? JSON.parse(session.checkout_state) : {
-          shipping: { name: null, line1: null, city: null, state: null, zip: null, country: 'US' },
-          email: null
-        },
+        collectedSize: session.collectedSize,
+        collectedPhrase: session.collectedPhrase,
+        checkout: session.checkoutState,
         uiHints: { skipTypewriter: true, showPaymentForm: false, blocked: false, inputDisabled: false },
         diagnosticMode: true,
         diagnosticData: diagnosticResponse.diagnosticData,
@@ -408,9 +437,9 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
     }
   }
   
-  // Check if time waster trying to come back (only in normal mode)
-  if (isRecentTimeWaster(session.customer_id, config.timeWasterThresholdHours)) {
-    logger.info('Chat: blocked time waster', { customerId: session.customer_id.substring(0, 8) + '...' });
+  // Check if customer is blocked (time-waster from cookie)
+  if (isCustomerBlocked(customer)) {
+    logger.info('Chat: blocked time waster', { customerId: customer.id.substring(0, 8) + '...' });
     return sendJson(res, {
       mongerReply: "you wasted the monger's time.  he'll be back later.",
       conversationState: 'blocked',
@@ -433,7 +462,20 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
   
   // Normal character chat
   try {
-    const mongerResponse = await getMongerReply(body.sessionId, body.userInput, customer);
+    // Build customer object for monger (from cookie state)
+    const customerForMonger = {
+      id: customer.id,
+      total_shirts_bought: customer.shirtsBought,
+      last_purchase_at: customer.lastPurchase,
+      is_blocked: isCustomerBlocked(customer),
+      blocked_until: customer.blockedUntil,
+    };
+    
+    const mongerResponse = await getMongerReply(body.sessionId, body.userInput, customerForMonger);
+    
+    // Log the conversation to file
+    logMessage(customer.id, body.sessionId, 'user', body.userInput);
+    logMessage(customer.id, body.sessionId, 'assistant', mongerResponse.reply);
     
     logger.debug('Chat: response generated', {
       sessionId: body.sessionId.substring(0, 8) + '...',
@@ -481,20 +523,24 @@ async function handleChat(req: IncomingMessage, res: ServerResponse) {
 
 interface ReferralLookupRequest {
   sessionId: string;
-  referrerEmail: string;
+  referrerQuery: string;  // Name, email, or phone
 }
 
 interface ReferralLookupResponse {
-  referrerStatus: 'unknown' | 'buyer' | 'vip' | 'ultra';
+  found: boolean;
+  referrerStatus: 'unknown' | 'buyer' | 'vip' | 'ultra' | 'friend_of';
   discountPercentage: number;
   mongerLine: string;
+  referrerName: string | null;
+  matchType: string | null;
+  connectedThrough: string | null;
 }
 
 async function handleReferralLookup(req: IncomingMessage, res: ServerResponse) {
   const body = await parseBody<ReferralLookupRequest>(req);
   
-  if (!body.sessionId || !body.referrerEmail) {
-    return sendError(res, 'Missing sessionId or referrerEmail');
+  if (!body.sessionId || !body.referrerQuery) {
+    return sendError(res, 'Missing sessionId or referrerQuery');
   }
   
   const session = getSession(body.sessionId);
@@ -502,49 +548,64 @@ async function handleReferralLookup(req: IncomingMessage, res: ServerResponse) {
     return sendError(res, 'Invalid session', 404);
   }
   
-  const referral = lookupReferral(body.referrerEmail);
+  logger.debug('Referral lookup', { 
+    sessionId: body.sessionId.substring(0, 8) + '...', 
+    query: body.referrerQuery.substring(0, 20) + '...' 
+  });
   
-  let status: 'unknown' | 'buyer' | 'vip' | 'ultra' = 'unknown';
-  let discountPercentage = 0;
-  
-  if (referral) {
-    if (referral.total_purchases >= 10) {
-      status = 'ultra';
-      discountPercentage = 25;
-    } else if (referral.is_vip || referral.total_purchases >= 5) {
-      status = 'vip';
-      discountPercentage = 20;
-    } else {
-      status = 'buyer';
-      discountPercentage = referral.discount_percentage || 10;
+  try {
+    // Query the Monger's referral network
+    const lookupResult = await mongerClient.lookupReferral({ query: body.referrerQuery });
+    
+    // Map tier to status
+    let status: 'unknown' | 'buyer' | 'vip' | 'ultra' | 'friend_of' = 'unknown';
+    if (lookupResult.found && lookupResult.tier) {
+      status = lookupResult.tier as typeof status;
     }
     
     // Update session with referrer info
-    updateSessionState(body.sessionId, {
-      referrerEmail: body.referrerEmail,
-      discountCode: discountPercentage > 0 ? `REF${discountPercentage}` : null,
-      conversationState: session.conversation_state,
-      collectedAffirmation: session.collected_affirmation === 1,
-      collectedSize: session.collected_size,
-      collectedPhrase: session.collected_phrase
+    if (lookupResult.found) {
+      updateSession(body.sessionId, {
+        referrerEmail: body.referrerQuery,
+        discountCode: lookupResult.discount > 0 ? `REF${lookupResult.discount}` : null,
+      });
+    }
+    
+    const response: ReferralLookupResponse = {
+      found: lookupResult.found,
+      referrerStatus: status,
+      discountPercentage: lookupResult.discount,
+      mongerLine: lookupResult.monger_line,
+      referrerName: lookupResult.name,
+      matchType: lookupResult.match_type,
+      connectedThrough: lookupResult.connected_through,
+    };
+    
+    logger.info('Referral lookup result', { 
+      found: lookupResult.found, 
+      tier: status, 
+      discount: lookupResult.discount 
+    });
+    
+    sendJson(res, response);
+    
+  } catch (error) {
+    logger.error('Referral lookup failed', { 
+      error: error instanceof Error ? error.message : String(error) 
+    });
+    
+    // Fallback response
+    const fallbackLine = getReferralResponseLine('unknown', 0);
+    sendJson(res, {
+      found: false,
+      referrerStatus: 'unknown',
+      discountPercentage: 0,
+      mongerLine: fallbackLine,
+      referrerName: null,
+      matchType: null,
+      connectedThrough: null,
     });
   }
-  
-  // Get the referral response line (try async first, fallback to sync)
-  let mongerLine: string;
-  try {
-    mongerLine = await getReferralResponseLineAsync(status, discountPercentage);
-  } catch (error) {
-    mongerLine = getReferralResponseLine(status, discountPercentage);
-  }
-  
-  const response: ReferralLookupResponse = {
-    referrerStatus: status,
-    discountPercentage,
-    mongerLine
-  };
-  
-  sendJson(res, response);
 }
 
 // ============================================
@@ -609,13 +670,11 @@ async function handleCreatePaymentIntent(req: IncomingMessage, res: ServerRespon
     });
     
     // Update session state
-    updateSessionState(body.sessionId, {
+    updateSession(body.sessionId, {
       conversationState: 'checkout_started',
       collectedSize: body.size,
       collectedPhrase: body.phrase,
       collectedAffirmation: true,
-      referrerEmail: session.referrer_email,
-      discountCode: session.discount_code
     });
     
     logger.info('PaymentIntent: created successfully', { 
@@ -723,20 +782,20 @@ async function handleStripeWebhook(req: IncomingMessage, res: ServerResponse) {
       if (metadata.session_id) {
         const session = getSession(metadata.session_id);
         if (session) {
-          updateSessionState(metadata.session_id, {
+          updateSession(metadata.session_id, {
             conversationState: 'purchase_complete',
             collectedAffirmation: true,
             collectedSize: metadata.size,
             collectedPhrase: metadata.phrase,
-            referrerEmail: session.referrer_email,
-            discountCode: session.discount_code,
           });
           
-          // Increment customer purchase count
-          const customer = getOrCreateCustomer(session.customer_id);
-          // Note: You may want to add a function to increment purchase count
+          // Log purchase to conversation file for correlation
+          logPurchase(session.customerId, metadata.session_id, paymentIntent.id);
         }
       }
+      
+      // Note: Customer state (shirtsBought) is updated on the frontend
+      // when it receives the success callback. The cookie is the source of truth.
       break;
     }
     
@@ -768,34 +827,24 @@ interface ProfileResponse {
 
 async function handleProfile(req: IncomingMessage, res: ServerResponse) {
   const cookies = parseCookies(req);
-  const url = new URL(req.url || '', `http://${req.headers.host}`);
-  const sessionId = url.searchParams.get('sessionId');
   
-  if (!sessionId) {
-    return sendError(res, 'Missing sessionId');
-  }
-  
-  const session = getSession(sessionId);
-  if (!session) {
-    return sendError(res, 'Invalid session', 404);
-  }
-  
-  const customer = getOrCreateCustomer(session.customer_id);
+  // Get customer state from cookie
+  const customer = getOrCreateCustomerState(cookies);
   
   let warmthLevel: 'cold' | 'neutral' | 'warm' | 'trusted' = 'neutral';
-  if (customer.time_wasted_flag) {
+  if (isCustomerBlocked(customer)) {
     warmthLevel = 'cold';
-  } else if (customer.total_shirts_bought >= 5) {
+  } else if (customer.shirtsBought >= 5) {
     warmthLevel = 'trusted';
-  } else if (customer.total_shirts_bought > 0) {
+  } else if (customer.shirtsBought > 0) {
     warmthLevel = 'warm';
   }
   
   const response: ProfileResponse = {
     customerId: customer.id,
-    totalShirtsBought: customer.total_shirts_bought,
-    lastPurchaseAt: customer.last_purchase_at,
-    isRepeatCustomer: customer.total_shirts_bought > 0,
+    totalShirtsBought: customer.shirtsBought,
+    lastPurchaseAt: customer.lastPurchase,
+    isRepeatCustomer: customer.shirtsBought > 0,
     warmthLevel
   };
   
@@ -810,12 +859,12 @@ async function handleGetSession(req: IncomingMessage, res: ServerResponse, sessi
   }
   
   sendJson(res, {
-    size: session.collected_size,
-    phrase: session.collected_phrase,
-    hasAffirmation: session.collected_affirmation === 1,
-    state: session.conversation_state,
-    referrerEmail: session.referrer_email,
-    discountCode: session.discount_code
+    size: session.collectedSize,
+    phrase: session.collectedPhrase,
+    hasAffirmation: session.collectedAffirmation,
+    state: session.conversationState,
+    referrerEmail: session.referrerEmail,
+    discountCode: session.discountCode
   });
 }
 
@@ -831,16 +880,10 @@ async function handleStatus(req: IncomingMessage, res: ServerResponse) {
     pid: process.pid,
   };
   
-  // Test database
-  try {
-    const dbTest = db.prepare('SELECT 1 as test').get() as { test: number };
-    status.database = { ok: true, test: dbTest.test };
-  } catch (error) {
-    status.database = { 
-      ok: false, 
-      error: error instanceof Error ? error.message : String(error) 
-    };
-  }
+  // Session store info
+  status.sessions = {
+    activeCount: getSessionCount(),
+  };
   
   // Test Monger Service (which tests LLM connection)
   try {
@@ -870,7 +913,7 @@ async function handleStatus(req: IncomingMessage, res: ServerResponse) {
     hasStripeKey: !!config.stripeSecretKey,
     stripeKeyPrefix: config.stripeSecretKey ? config.stripeSecretKey.substring(0, 7) + '...' : '(missing)',
     shirtPriceCents: config.shirtPriceCents,
-    databasePath: config.databasePath,
+    conversationsPath: config.conversationsPath,
     logPath: config.logPath,
     logLevel: config.logLevel,
   };
@@ -882,6 +925,7 @@ async function handleStatus(req: IncomingMessage, res: ServerResponse) {
 // Handle time waster marking (called when session ends without purchase)
 async function handleMarkTimeWaster(req: IncomingMessage, res: ServerResponse) {
   const body = await parseBody<{ sessionId: string }>(req);
+  const cookies = parseCookies(req);
   
   if (!body.sessionId) {
     return sendError(res, 'Missing sessionId');
@@ -892,8 +936,18 @@ async function handleMarkTimeWaster(req: IncomingMessage, res: ServerResponse) {
     return sendError(res, 'Invalid session', 404);
   }
   
-  markCustomerTimeWaster(session.customer_id);
-  sendJson(res, { success: true });
+  // Get customer state and set blocked until
+  const customer = getOrCreateCustomerState(cookies);
+  const blockedUntil = new Date(Date.now() + config.timeWasterThresholdHours * 60 * 60 * 1000);
+  customer.blockedUntil = blockedUntil.toISOString();
+  
+  // Update cookie with blocked status
+  setCustomerStateCookie(res, customer);
+  
+  // Log session end
+  logSessionEnd(customer.id, body.sessionId, 'time_waster');
+  
+  sendJson(res, { success: true, blockedUntil: customer.blockedUntil });
 }
 
 // Request router
@@ -988,7 +1042,7 @@ server.listen(config.port, config.host, () => {
     mongerServiceUrl: config.mongerServiceUrl,
     hasStripeKey: !!config.stripeSecretKey,
     shirtPriceCents: config.shirtPriceCents,
-    databasePath: config.databasePath
+    conversationsPath: config.conversationsPath,
   });
   
   logger.info('Endpoints available', {

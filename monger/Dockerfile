@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY src/ ./src/
 COPY config/ ./config/
+COPY data/ ./data/
 
 # Create non-root user (UID 1002 to match host cheeseshirt user)
 RUN groupadd -g 1002 monger && \
@@ -33,6 +34,7 @@ ENV HOST=0.0.0.0
 ENV PORT=3002
 ENV LOG_LEVEL=info
 ENV CHARACTER_CONFIG_PATH=/app/config/monger.json
+ENV REFERRALS_PATH=/app/data/referrals.json
 ENV LLM_SERVICE_URL=http://llm:11435
 ENV LLM_SERVICE_TIMEOUT=120.0
 
