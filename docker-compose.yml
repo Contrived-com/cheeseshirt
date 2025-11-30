@@ -84,6 +84,8 @@ services:
       - DEFAULT_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
       - DEFAULT_MAX_TOKENS=${LLM_MAX_TOKENS:-1024}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Keep model loaded in RAM indefinitely (don't unload after idle)
+      - OLLAMA_KEEP_ALIVE=-1
     volumes:
       # Persist downloaded models between restarts
       - ollama-models:/root/.ollama
