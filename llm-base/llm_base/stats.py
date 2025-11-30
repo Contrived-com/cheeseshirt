@@ -1,9 +1,10 @@
 """
-Shared statistics tracking for LLM sidecars.
+Statistics tracking for LLM sidecars.
 
-Copy this file into your sidecar to get consistent stats tracking
-that conforms to the llm-interface.md spec.
+Provides consistent stats tracking that conforms to the llm-interface.md spec.
+Thread-safe for single-writer scenarios (one request at a time).
 """
+
 import os
 import time
 import statistics

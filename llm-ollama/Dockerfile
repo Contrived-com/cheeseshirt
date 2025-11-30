@@ -1,32 +1,29 @@
-# LLM Sidecar - Ollama wrapper
+# LLM Sidecar - Ollama implementation (CPU-only, runtime model pull)
 #
-# Implements llm-interface.md spec for local models via Ollama.
-# Same interface as llm-openai so they're interchangeable.
-#
-# This container runs both Ollama and a thin Python wrapper.
+# Uses alpine/ollama for minimal CPU-only image (~22MB base).
+# Model is pulled at runtime on first startup.
+# For pre-baked model, see llm-ollama-phi3.5/Dockerfile.
 
-FROM ollama/ollama:latest
+FROM alpine/ollama:latest
 
-# Install Python for the wrapper service
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install Python and pip
+# Note: alpine/ollama uses wolfi-base which has apk
+RUN apk add --no-cache \
     python3 \
-    python3-pip \
-    python3-venv \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+    py3-pip
 
 WORKDIR /app
 
-# Create and activate virtual environment
-RUN python3 -m venv /app/venv
-ENV PATH="/app/venv/bin:$PATH"
+# Install base dependencies
+COPY --from=ghcr.io/contrived-com/cheeseshirt-llm-base:latest /app/llm_base /app/llm_base
+COPY --from=ghcr.io/contrived-com/cheeseshirt-llm-base:latest /app/requirements.txt /app/requirements-base.txt
 
 # Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Using --break-system-packages because we're in a container
+RUN pip install --no-cache-dir --break-system-packages -r requirements-base.txt
 
-# Copy wrapper service
-COPY stats.py .
+# Copy provider implementation
+COPY provider.py .
 COPY server.py .
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
@@ -39,7 +36,7 @@ ENV DEFAULT_TEMPERATURE=0.7
 ENV DEFAULT_MAX_TOKENS=1024
 ENV LOG_LEVEL=info
 
-# Ollama stores models here
+# Ollama stores models here - mount a volume for persistence
 VOLUME /root/.ollama
 
 # Expose both Ollama native port and our wrapper port
@@ -47,6 +44,6 @@ EXPOSE 11434 11435
 
 # Health check against our wrapper
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD curl -sf http://localhost:11435/health | grep -q '"status":"ok"' || exit 1
+    CMD wget -q -O- http://localhost:11435/health | grep -q '"status":"ok"' || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]

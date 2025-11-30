@@ -1,5 +1,4 @@
 # cheeseshirt docker-compose
-# just some silly text to provoke a rebuild
 #
 # CI/CD: GitHub Actions builds and pushes images to GHCR on merge to main.
 #        See .github/workflows/build-and-push.yml
@@ -14,20 +13,36 @@
 # Note: The 'build' directives exist for local dev convenience only.
 # Production should always pull pre-built images from GHCR - never build on the server.
 #
-# LLM Configuration:
-#   The Monger talks to an LLM sidecar service. Enable ONE of:
-#   - llm-openai: Uses OpenAI API (requires OPENAI_API_KEY)
-#   - llm-ollama: Uses local Ollama with Phi-3.5 or other models
+# =============================================================================
+# LLM Configuration
+# =============================================================================
+# The Monger talks to an LLM sidecar service. Enable ONE of:
 #
-#   To switch LLMs, comment/uncomment the appropriate service below.
-#   The Monger doesn't know or care which LLM is being used.
+#   1. llm-openai:        Cloud API (~80MB image)
+#                         Requires OPENAI_API_KEY
+#                         Fast responses, pay per token
+#
+#   2. llm-ollama:        CPU-only local inference (~100MB image)
+#                         Model pulled at runtime, stored in volume
+#                         First startup slow, subsequent fast
+#
+#   3. llm-ollama-phi3.5: CPU-only with model baked in (~2.3GB image)
+#                         Instant startup, no runtime downloads
+#                         Best for production deployments
+#
+# To switch LLMs, comment/uncomment the appropriate service below.
+# The Monger doesn't know or care which LLM is being used.
+# =============================================================================
 
 services:
   # ==========================================================================
-  # LLM Sidecar - Enable ONE of these
+  # LLM Sidecar - Enable ONE of these (Option 1, 2, or 3)
   # ==========================================================================
 
-  # Option 1: OpenAI (cloud API)
+  # ---------------------------------------------------------------------------
+  # Option 1: OpenAI (cloud API) - DEFAULT
+  # ---------------------------------------------------------------------------
+  # Smallest image, requires API key, charges per token
   llm:
     image: ghcr.io/contrived-com/cheeseshirt-llm-openai:latest
     build:
@@ -50,8 +65,12 @@ services:
     networks:
       - cheeseshirt
 
-  # Option 2: Ollama (local models - Phi-3.5, Llama, etc.)
-  # Uncomment this and comment out the llm-openai service above to use local models
+  # ---------------------------------------------------------------------------
+  # Option 2: Ollama CPU-only (model pulled at runtime)
+  # ---------------------------------------------------------------------------
+  # Uses alpine/ollama (~22MB base), model downloaded on first start
+  # Good for development or when you want to easily switch models
+  # 
   # llm:
   #   image: ghcr.io/contrived-com/cheeseshirt-llm-ollama:latest
   #   build:
@@ -65,14 +84,41 @@ services:
   #     - DEFAULT_MAX_TOKENS=${LLM_MAX_TOKENS:-1024}
   #     - LOG_LEVEL=${LOG_LEVEL:-info}
   #   volumes:
-  #     # Persist downloaded models
+  #     # Persist downloaded models between restarts
   #     - ollama-models:/root/.ollama
   #   healthcheck:
-  #     test: ["CMD", "python3", "-c", "import httpx; r = httpx.get('http://localhost:11435/health'); r.raise_for_status()"]
+  #     test: ["CMD", "wget", "-q", "-O-", "http://localhost:11435/health"]
   #     interval: 30s
   #     timeout: 10s
   #     retries: 3
-  #     start_period: 120s  # Model download can take a while
+  #     start_period: 120s  # Model download can take a while on first start
+  #   networks:
+  #     - cheeseshirt
+
+  # ---------------------------------------------------------------------------
+  # Option 3: Ollama CPU-only with phi3.5 baked in (fat image)
+  # ---------------------------------------------------------------------------
+  # ~2.3GB image with model pre-downloaded, instant startup
+  # Best for production when you want consistent, fast cold starts
+  #
+  # llm:
+  #   image: ghcr.io/contrived-com/cheeseshirt-llm-ollama-phi3.5:latest
+  #   build:
+  #     context: ./llm-ollama-phi3.5
+  #     dockerfile: Dockerfile
+  #   container_name: cheeseshirt-llm
+  #   restart: unless-stopped
+  #   environment:
+  #     - MODEL_NAME=phi3.5:3.8b-mini-instruct-q4_K_M
+  #     - DEFAULT_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
+  #     - DEFAULT_MAX_TOKENS=${LLM_MAX_TOKENS:-1024}
+  #     - LOG_LEVEL=${LOG_LEVEL:-info}
+  #   healthcheck:
+  #     test: ["CMD", "wget", "-q", "-O-", "http://localhost:11435/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 30s  # Fast startup since model is baked in
   #   networks:
   #     - cheeseshirt
 
