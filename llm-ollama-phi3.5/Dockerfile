@@ -31,10 +31,11 @@ FROM alpine/ollama:latest
 # Copy pre-pulled model from stage 1
 COPY --from=model-puller /root/.ollama /root/.ollama
 
-# Install Python and pip
+# Install Python, pip, and wget (for health checks)
 RUN apk add --no-cache \
     python3 \
-    py3-pip
+    py3-pip \
+    wget
 
 WORKDIR /app
 

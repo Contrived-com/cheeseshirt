@@ -6,11 +6,12 @@
 
 FROM alpine/ollama:latest
 
-# Install Python and pip
+# Install Python, pip, and wget (for health checks)
 # Note: alpine/ollama uses wolfi-base which has apk
 RUN apk add --no-cache \
     python3 \
-    py3-pip
+    py3-pip \
+    wget
 
 WORKDIR /app
 
